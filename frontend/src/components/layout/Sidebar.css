@@ -1,0 +1,147 @@
+.sidebar {
+  width: 260px;
+  min-height: 100vh;
+  background-color: #1a1a1a;
+  border-right: 1px solid rgba(240, 230, 140, 0.2);
+  display: flex;
+  flex-direction: column;
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 100;
+}
+
+.sidebar-container {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  padding: 2rem 0;
+}
+
+.sidebar-header {
+  padding: 0 1.5rem;
+  margin-bottom: 3rem;
+}
+
+.sidebar-logo {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  text-decoration: none;
+  color: #F0E68C;
+  font-size: 1.5rem;
+  font-weight: 700;
+  transition: opacity 0.3s ease;
+}
+
+.sidebar-logo:hover {
+  opacity: 0.8;
+}
+
+.logo-image {
+  width: 40px;
+  height: 40px;
+  object-fit: contain;
+  flex-shrink: 0;
+}
+
+.logo-text {
+  color: #F0E68C;
+}
+
+.sidebar-nav {
+  flex: 1;
+  padding: 0 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.875rem 1rem;
+  color: rgba(240, 230, 140, 0.7);
+  text-decoration: none;
+  border-radius: 8px;
+  transition: all 0.3s ease;
+  font-size: 0.95rem;
+  font-weight: 500;
+}
+
+.nav-item svg {
+  flex-shrink: 0;
+  stroke: currentColor;
+}
+
+.nav-item:hover {
+  background-color: rgba(240, 230, 140, 0.1);
+  color: #F0E68C;
+}
+
+.nav-item.active {
+  background-color: rgba(240, 230, 140, 0.2);
+  color: #F0E68C;
+  border: 1px solid rgba(240, 230, 140, 0.3);
+}
+
+.nav-item.active svg {
+  stroke: #F0E68C;
+}
+
+.sidebar-footer {
+  padding: 1.5rem;
+  border-top: 1px solid rgba(240, 230, 140, 0.2);
+}
+
+.logout-button {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  width: 100%;
+  padding: 0.875rem 1rem;
+  background: none;
+  border: none;
+  color: #d32f2f;
+  cursor: pointer;
+  border-radius: 8px;
+  font-size: 0.95rem;
+  font-weight: 500;
+  transition: all 0.3s ease;
+}
+
+.logout-button svg {
+  flex-shrink: 0;
+  stroke: currentColor;
+}
+
+.logout-button:hover {
+  background-color: rgba(211, 47, 47, 0.1);
+  color: #ff5252;
+}
+
+@media (max-width: 768px) {
+  .sidebar {
+    width: 100%;
+    height: auto;
+    position: relative;
+    min-height: auto;
+  }
+
+  .sidebar-container {
+    height: auto;
+    padding: 1rem 0;
+  }
+
+  .sidebar-nav {
+    flex-direction: row;
+    overflow-x: auto;
+    padding: 0 1rem;
+  }
+
+  .nav-item {
+    white-space: nowrap;
+  }
+}
+

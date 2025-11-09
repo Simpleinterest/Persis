@@ -1,0 +1,193 @@
+.calendar-heatmap-container {
+  background-color: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  padding: 1.5rem;
+  margin-bottom: 2rem;
+  overflow-x: auto;
+}
+
+.calendar-heatmap-header {
+  margin-bottom: 1.5rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.calendar-heatmap-header h3 {
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: #F0E68C;
+  margin: 0;
+}
+
+.calendar-legend {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.legend-squares {
+  display: flex;
+  gap: 3px;
+}
+
+.legend-square {
+  width: 12px;
+  height: 12px;
+  border-radius: 2px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.legend-square.intensity-0 {
+  background-color: rgba(255, 255, 255, 0.1);
+}
+
+.legend-square.intensity-1 {
+  background-color: rgba(240, 230, 140, 0.2);
+}
+
+.legend-square.intensity-2 {
+  background-color: rgba(240, 230, 140, 0.4);
+}
+
+.legend-square.intensity-3 {
+  background-color: rgba(240, 230, 140, 0.6);
+}
+
+.legend-square.intensity-4 {
+  background-color: rgba(240, 230, 140, 0.9);
+}
+
+.calendar-heatmap-content {
+  min-width: 800px;
+}
+
+.calendar-wrapper {
+  position: relative;
+}
+
+.month-labels-row {
+  display: flex;
+  margin-bottom: 0.5rem;
+  margin-left: 30px;
+  position: relative;
+  height: 20px;
+}
+
+.month-label-item {
+  font-size: 0.75rem;
+  color: rgba(255, 255, 255, 0.7);
+  font-weight: 500;
+  position: absolute;
+}
+
+.calendar-grid {
+  display: flex;
+  gap: 2px;
+}
+
+.day-labels {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 30px;
+}
+
+.day-label {
+  width: 12px;
+  height: 12px;
+  font-size: 0.7rem;
+  color: rgba(255, 255, 255, 0.5);
+  text-align: right;
+  padding-right: 8px;
+}
+
+.weeks-container {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+}
+
+.week-row {
+  display: flex;
+  gap: 2px;
+}
+
+.day-cell {
+  width: 12px;
+  height: 12px;
+  border-radius: 2px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  position: relative;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.day-cell:hover {
+  border-color: #F0E68C;
+  transform: scale(1.2);
+  z-index: 10;
+}
+
+.day-cell.empty {
+  background-color: transparent;
+  border: none;
+  cursor: default;
+}
+
+.day-cell.intensity-0 {
+  background-color: rgba(255, 255, 255, 0.1);
+}
+
+.day-cell.intensity-1 {
+  background-color: rgba(240, 230, 140, 0.2);
+}
+
+.day-cell.intensity-2 {
+  background-color: rgba(240, 230, 140, 0.4);
+}
+
+.day-cell.intensity-3 {
+  background-color: rgba(240, 230, 140, 0.6);
+}
+
+.day-cell.intensity-4 {
+  background-color: rgba(240, 230, 140, 0.9);
+}
+
+.day-cell.today {
+  border: 2px solid #F0E68C;
+  border-radius: 3px;
+}
+
+.today-indicator {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  width: 4px;
+  height: 4px;
+  background-color: #F0E68C;
+  border-radius: 50%;
+}
+
+@media (max-width: 768px) {
+  .calendar-heatmap-container {
+    padding: 1rem;
+  }
+
+  .calendar-heatmap-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .calendar-heatmap-content {
+    min-width: 600px;
+  }
+}
+

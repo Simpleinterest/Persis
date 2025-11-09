@@ -2,7 +2,6 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import authService from '../../services/authService';
 import { RegisterUserRequest, RegisterCoachRequest } from '../../types/auth.types';
-import Navbar from '../../components/layout/Navbar';
 import './RegisterPage.css';
 
 const RegisterPage: React.FC = () => {
@@ -66,7 +65,6 @@ const RegisterPage: React.FC = () => {
 
   return (
     <div className="register-page">
-      <Navbar />
       <div className="register-container">
         <div>
           <div className="register-header">

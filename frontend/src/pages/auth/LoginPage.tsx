@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import authService from '../../services/authService';
-import Navbar from '../../components/layout/Navbar';
 import './LoginPage.css';
 
 const LoginPage: React.FC = () => {
@@ -34,7 +33,6 @@ const LoginPage: React.FC = () => {
 
   return (
     <div className="login-page">
-      <Navbar />
       <div className="login-container">
         <div>
           <div className="login-header">

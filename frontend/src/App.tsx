@@ -1,13 +1,16 @@
 import React from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
-
-// --- Imports from both branches, combined ---
+import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import LandingPage from './pages/LandingPage';
 import AICoachChat from './pages/user/AICoachChat';
+import StudentDashboard from './pages/user/StudentDashboard';
+import CoachRequests from './pages/user/CoachRequests';
+import StudentSettings from './pages/user/StudentSettings';
+import CoachDashboard from './pages/coach/CoachDashboard';
+import StudentDetail from './pages/coach/StudentDetail';
+import CoachSettings from './pages/coach/CoachSettings';
 import LoginPage from './pages/auth/LoginPage';
 import RegisterPage from './pages/auth/RegisterPage';
 import ProtectedRoute from './components/common/ProtectedRoute';
-import LandingPage from './pages/LandingPage';
-
 import './App.css';
 
 function App() {
@@ -15,13 +18,17 @@ function App() {
     <Router>
       <div className="App">
         <Routes>
-          {/* --- This is the 'main' branch's app flow --- */}
-          {/* It redirects the root path "/" to the login page */}
-          <Route path="/" element={<Navigate to="/login" replace />} />
+          <Route path="/" element={<LandingPage />} />
           <Route path="/login" element={<LoginPage />} />
           <Route path="/register" element={<RegisterPage />} />
-          
-          {/* It protects the /ai-coach route so only logged-in users can see it */}
+          <Route 
+            path="/dashboard" 
+            element={
+              <ProtectedRoute requireUser>
+                <StudentDashboard />
+              </ProtectedRoute>
+            } 
+          />
           <Route 
             path="/ai-coach" 
             element={
@@ -30,12 +37,46 @@ function App() {
               </ProtectedRoute>
             } 
           />
-          
-          {/* --- This is your branch's 'LandingPage' --- */}
-          {/* I've added it to the path "/landing" so it doesn't 
-              conflict with the root redirect above. */}
-          <Route path="/landing" element={<LandingPage />} />
-
+          <Route 
+            path="/coach-requests" 
+            element={
+              <ProtectedRoute requireUser>
+                <CoachRequests />
+              </ProtectedRoute>
+            } 
+          />
+          <Route 
+            path="/settings" 
+            element={
+              <ProtectedRoute requireUser>
+                <StudentSettings />
+              </ProtectedRoute>
+            } 
+          />
+          <Route 
+            path="/coach/dashboard" 
+            element={
+              <ProtectedRoute requireCoach>
+                <CoachDashboard />
+              </ProtectedRoute>
+            } 
+          />
+          <Route 
+            path="/coach/students/:studentId" 
+            element={
+              <ProtectedRoute requireCoach>
+                <StudentDetail />
+              </ProtectedRoute>
+            } 
+          />
+          <Route 
+            path="/coach/settings" 
+            element={
+              <ProtectedRoute requireCoach>
+                <CoachSettings />
+              </ProtectedRoute>
+            } 
+          />
         </Routes>
       </div>
     </Router>

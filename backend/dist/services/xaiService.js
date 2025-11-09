@@ -3,285 +3,133 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.getExerciseAdvice = exports.analyzeLiveVideoFrame = exports.analyzeVideoForm = exports.getAIChatResponse = exports.callXAI = exports.buildSystemPrompt = exports.getAIParametersForUser = void 0;
+exports.xaiService = void 0;
 const axios_1 = __importDefault(require("axios"));
 const dotenv_1 = __importDefault(require("dotenv"));
-const Coach_1 = __importDefault(require("../models/Coach"));
-const User_1 = __importDefault(require("../models/User"));
 dotenv_1.default.config();
-const XAI_API_KEY = process.env.XAI_API_KEY;
-const XAI_API_URL = process.env.XAI_API_URL || 'https://api.x.ai/v1/chat/completions';
-const XAI_MODEL = process.env.XAI_MODEL || 'grok-3';
-// Validate API key
+const XAI_API_KEY = process.env.XAI_API_KEY || '';
+const XAI_API_URL = 'https://api.x.ai/v1/chat/completions';
 if (!XAI_API_KEY) {
-    console.warn('⚠️  WARNING: XAI_API_KEY is not set in environment variables. AI features will not work.');
-    console.warn('   Please set XAI_API_KEY in your .env file.');
+    console.warn('⚠️  XAI_API_KEY not found in environment variables');
 }
-/**
- * Get AI parameters for a user from their coach
- */
-const getAIParametersForUser = async (userId) => {
-    try {
-        const user = await User_1.default.findById(userId);
-        if (!user || !user.coachId) {
-            return '';
-        }
-        const coach = await Coach_1.default.findById(user.coachId);
-        if (!coach || !coach.aiParameters) {
-            return '';
-        }
-        return coach.aiParameters[userId] || '';
-    }
-    catch (error) {
-        console.error('Error getting AI parameters:', error);
-        return '';
-    }
-};
-exports.getAIParametersForUser = getAIParametersForUser;
-/**
- * Build system prompt for AI coach
- */
-const buildSystemPrompt = async (userId) => {
-    try {
-        const user = await User_1.default.findById(userId);
-        if (!user) {
-            return 'You are an AI fitness coach. Help users with their fitness goals, form corrections, and training advice.';
-        }
-        let systemPrompt = `You are an AI fitness coach for Persis, an AI-powered fitness coaching platform. Your role is to help users with:
-- Form corrections and technique improvements
-- Workout planning and programming
-- Nutrition advice
-- Progress tracking and motivation
-- Injury prevention and recovery
-
-User Profile:
-- Name: ${user.profile?.fullName || user.userName}
-- Age: ${user.age || 'Not specified'}
-- Weight: ${user.bodyWeight || 'Not specified'} lbs
-- Height: ${user.height || 'Not specified'} inches
-- Gender: ${user.gender || 'Not specified'}
-- Sports: ${user.sports.join(', ') || 'Not specified'}
-- Goal: ${user.profile?.bio || 'Not specified'}`;
-        // Add coach parameters if available
-        const coachParameters = await (0, exports.getAIParametersForUser)(userId);
-        if (coachParameters) {
-            systemPrompt += `\n\nCoach Instructions:\n${coachParameters}`;
-        }
-        systemPrompt += `\n\nAlways provide helpful, accurate, and motivating advice. Be concise but thorough. Focus on safety and proper form.`;
-        return systemPrompt;
-    }
-    catch (error) {
-        console.error('Error building system prompt:', error);
-        return 'You are an AI fitness coach. Help users with their fitness goals, form corrections, and training advice.';
-    }
-};
-exports.buildSystemPrompt = buildSystemPrompt;
-/**
- * Call XAI API for chat completion
- */
-const callXAI = async (messages, temperature = 0.7, stream = false) => {
-    // Check if API key is configured
-    if (!XAI_API_KEY) {
-        const errorMsg = 'XAI API key is not configured. Please set XAI_API_KEY in your .env file.';
-        console.error('❌', errorMsg);
-        throw new Error(errorMsg);
-    }
-    try {
-        console.log(`📡 Calling XAI API with model: ${XAI_MODEL}`);
-        console.log(`📝 Messages: ${messages.length} message(s)`);
-        const response = await axios_1.default.post(XAI_API_URL, {
-            messages,
-            model: XAI_MODEL,
-            stream,
-            temperature,
-        }, {
+class XAIService {
+    constructor() {
+        this.apiKey = XAI_API_KEY;
+        this.apiUrl = XAI_API_URL;
+        this.axiosInstance = axios_1.default.create({
+            baseURL: this.apiUrl,
             headers: {
                 'Content-Type': 'application/json',
-                'Authorization': `Bearer ${XAI_API_KEY}`,
+                'Authorization': `Bearer ${this.apiKey}`,
             },
-            timeout: 30000, // 30 second timeout
+            timeout: 60000,
         });
-        if (response.data.choices && response.data.choices.length > 0) {
-            const content = response.data.choices[0].message.content;
-            console.log('✅ XAI API response received');
-            return content;
-        }
-        throw new Error('No response from XAI API - empty choices array');
     }
-    catch (error) {
-        // Detailed error logging
-        if (error.response) {
-            // The request was made and the server responded with a status code
-            // that falls out of the range of 2xx
-            console.error('❌ XAI API Error Response:', {
-                status: error.response.status,
-                statusText: error.response.statusText,
-                data: error.response.data,
-                headers: error.response.headers,
+    async chatCompletion(request) {
+        try {
+            if (!this.apiKey) {
+                throw new Error('XAI API key is not configured');
+            }
+            const payload = {
+                model: request.model || 'grok-3',
+                messages: request.messages,
+                temperature: request.temperature ?? 0.7,
+                max_tokens: request.max_tokens ?? 1000,
+                stream: request.stream ?? false,
+            };
+            const response = await this.axiosInstance.post('', payload);
+            return response.data;
+        }
+        catch (error) {
+            console.error('XAI API Error:', error.response?.data || error.message);
+            throw new Error(`XAI API request failed: ${error.response?.data?.error?.message || error.message}`);
+        }
+    }
+    async *streamChatCompletion(request) {
+        try {
+            if (!this.apiKey) {
+                throw new Error('XAI API key is not configured');
+            }
+            const payload = {
+                model: request.model || 'grok-3',
+                messages: request.messages,
+                temperature: request.temperature ?? 0.7,
+                max_tokens: request.max_tokens ?? 1000,
+                stream: true,
+            };
+            const response = await this.axiosInstance.post('', payload, {
+                responseType: 'stream',
             });
-            const errorMessage = error.response.data?.error?.message ||
-                error.response.data?.message ||
-                `HTTP ${error.response.status}: ${error.response.statusText}`;
-            throw new Error(`XAI API Error: ${errorMessage}`);
+            for await (const chunk of response.data) {
+                const lines = chunk.toString().split('\n');
+                for (const line of lines) {
+                    if (line.startsWith('data: ')) {
+                        const data = line.slice(6);
+                        if (data === '[DONE]') {
+                            return;
+                        }
+                        try {
+                            const parsed = JSON.parse(data);
+                            if (parsed.choices?.[0]?.delta?.content) {
+                                yield parsed.choices[0].delta.content;
+                            }
+                        }
+                        catch (e) {
+                            // Skip invalid JSON
+                        }
+                    }
+                }
+            }
         }
-        else if (error.request) {
-            // The request was made but no response was received
-            console.error('❌ XAI API No Response:', {
-                message: error.message,
-                code: error.code,
+        catch (error) {
+            console.error('XAI Stream Error:', error.response?.data || error.message);
+            throw new Error(`XAI stream request failed: ${error.message}`);
+        }
+    }
+    async analyzeVideo(description, context, aiContext) {
+        try {
+            // Build system prompt with stateful behavior guidelines
+            let systemPrompt = `You are Persis, a professional AI fitness coach specializing in real-time form analysis. Your feedback is technical, specific, and actionable.`;
+            // Use the system prompt from AI context if available (it includes state tracking info and sport-specific instructions)
+            if (aiContext && aiContext.systemPrompt) {
+                systemPrompt = aiContext.systemPrompt;
+            }
+            else {
+                systemPrompt += `\n\nCRITICAL VIDEO ANALYSIS GUIDELINES:
+- Provide SPECIFIC, TECHNICAL feedback based on pose landmarks and body position
+- Focus on FORM CORRECTIONS: alignment, posture, joint angles, movement patterns
+- Be ACTIONABLE: Tell the user exactly what to change and how
+- AVOID generic encouragement like "Good job!" or "Keep it up!"
+- Instead of "Good form!", say "Your back is straight and knees are aligned with toes - excellent"
+- Instead of "Try harder!", say "Your left shoulder is dropping 3 inches. Engage your core and pull it level with your right shoulder"
+- Only provide feedback when there's a SIGNIFICANT observation or correction needed
+- Keep feedback to 1-2 sentences maximum (20-50 words)
+- Use anatomical terms: "knees", "hips", "spine", "shoulders", "elbows"
+- Focus on safety: point out potential injury risks immediately
+- Be precise: "Your knee is caving inward 5 degrees" is better than "Watch your knee alignment"`;
+            }
+            // Increase max_tokens if structured output is requested
+            const requestStructuredOutput = aiContext?.requestStructuredOutput || false;
+            const maxTokens = requestStructuredOutput ? 500 : 100; // More tokens for structured JSON + feedback
+            const userPrompt = `Video Description: ${description}\n\nContext: ${context}\n\nAnalyze the workout form and provide SPECIFIC, TECHNICAL feedback. Focus on actionable corrections based on what you observe in the pose data. Only provide feedback if there's a significant form issue, state change, or safety concern.${requestStructuredOutput ? '\n\nIMPORTANT: Return a JSON object with structured metrics followed by your feedback text.' : ''}`;
+            const messages = [
+                { role: 'system', content: systemPrompt },
+                { role: 'user', content: userPrompt },
+            ];
+            const response = await this.chatCompletion({
+                messages,
+                model: 'grok-3',
+                temperature: 0.6, // Lower temperature for more consistent, technical responses
+                max_tokens: maxTokens,
             });
-            throw new Error(`XAI API Error: No response from server. Please check your internet connection and API endpoint: ${XAI_API_URL}`);
+            return response.choices[0]?.message?.content || 'Unable to analyze video at this time.';
         }
-        else {
-            // Something happened in setting up the request that triggered an Error
-            console.error('❌ XAI API Request Error:', error.message);
-            throw new Error(`XAI API Error: ${error.message}`);
+        catch (error) {
+            console.error('Video analysis error:', error);
+            throw error;
         }
     }
-};
-exports.callXAI = callXAI;
-/**
- * Get AI chat response for user
- */
-const getAIChatResponse = async (userId, userMessage, conversationHistory = []) => {
-    try {
-        // Validate API key before proceeding
-        if (!XAI_API_KEY) {
-            throw new Error('XAI API key is not configured. Please set XAI_API_KEY in your .env file.');
-        }
-        // Build system prompt
-        const systemPrompt = await (0, exports.buildSystemPrompt)(userId);
-        console.log(`📋 System prompt built for user ${userId}`);
-        // Construct messages array
-        const messages = [
-            {
-                role: 'system',
-                content: systemPrompt,
-            },
-            ...conversationHistory,
-            {
-                role: 'user',
-                content: userMessage,
-            },
-        ];
-        console.log(`💬 Sending message to XAI: "${userMessage.substring(0, 50)}..."`);
-        // Call XAI API
-        const response = await (0, exports.callXAI)(messages, 0.7, false);
-        console.log(`✅ Received response from XAI: "${response.substring(0, 50)}..."`);
-        return response;
-    }
-    catch (error) {
-        console.error('❌ Error getting AI chat response:', error);
-        // Re-throw with more context
-        if (error.message.includes('API key')) {
-            throw new Error('XAI API key is not configured. Please set XAI_API_KEY in your .env file and restart the server.');
-        }
-        throw error;
-    }
-};
-exports.getAIChatResponse = getAIChatResponse;
-/**
- * Analyze video for form correction
- */
-const analyzeVideoForm = async (userId, videoDescription, exercise) => {
-    try {
-        const systemPrompt = await (0, exports.buildSystemPrompt)(userId);
-        const analysisPrompt = `Analyze the following exercise form for ${exercise}. 
-    
-Video Description: ${videoDescription}
-
-Provide:
-1. Form assessment (good points and areas for improvement)
-2. Specific corrections needed
-3. Safety concerns if any
-4. Tips for improvement
-
-Be concise and actionable.`;
-        const messages = [
-            {
-                role: 'system',
-                content: systemPrompt + '\n\nYou are an expert in exercise form analysis and biomechanics.',
-            },
-            {
-                role: 'user',
-                content: analysisPrompt,
-            },
-        ];
-        const response = await (0, exports.callXAI)(messages, 0.5, false);
-        return response;
-    }
-    catch (error) {
-        console.error('Error analyzing video form:', error);
-        throw error;
-    }
-};
-exports.analyzeVideoForm = analyzeVideoForm;
-/**
- * Analyze live video frame for real-time form correction
- */
-const analyzeLiveVideoFrame = async (userId, frameDescription, exercise, previousCorrections = []) => {
-    try {
-        const systemPrompt = await (0, exports.buildSystemPrompt)(userId);
-        let prompt = `Analyze the current exercise form for ${exercise} based on this frame description: ${frameDescription}`;
-        if (previousCorrections.length > 0) {
-            prompt += `\n\nPrevious corrections given:\n${previousCorrections.join('\n')}`;
-        }
-        prompt += `\n\nProvide a brief, real-time correction if needed. Format: [SEVERITY: info/warning/error] [CORRECTION TEXT]`;
-        const messages = [
-            {
-                role: 'system',
-                content: systemPrompt + '\n\nYou are providing real-time form corrections during a live workout.',
-            },
-            {
-                role: 'user',
-                content: prompt,
-            },
-        ];
-        const response = await (0, exports.callXAI)(messages, 0.3, false);
-        // Parse response for severity and correction
-        const severityMatch = response.match(/\[SEVERITY:\s*(info|warning|error)\]/i);
-        const severity = severityMatch
-            ? severityMatch[1].toLowerCase()
-            : 'info';
-        const correction = response.replace(/\[SEVERITY:\s*(info|warning|error)\]/i, '').trim();
-        return {
-            correction,
-            severity,
-        };
-    }
-    catch (error) {
-        console.error('Error analyzing live video frame:', error);
-        // Return a safe default response
-        return {
-            correction: 'Keep focusing on proper form. Continue your workout.',
-            severity: 'info',
-        };
-    }
-};
-exports.analyzeLiveVideoFrame = analyzeLiveVideoFrame;
-/**
- * Get exercise-specific advice
- */
-const getExerciseAdvice = async (userId, exercise, question) => {
-    try {
-        const systemPrompt = await (0, exports.buildSystemPrompt)(userId);
-        const messages = [
-            {
-                role: 'system',
-                content: systemPrompt + `\n\nYou are an expert in ${exercise} technique and programming.`,
-            },
-            {
-                role: 'user',
-                content: `Exercise: ${exercise}\n\nQuestion: ${question}`,
-            },
-        ];
-        const response = await (0, exports.callXAI)(messages, 0.7, false);
-        return response;
-    }
-    catch (error) {
-        console.error('Error getting exercise advice:', error);
-        throw error;
-    }
-};
-exports.getExerciseAdvice = getExerciseAdvice;
+}
+exports.xaiService = new XAIService();
+exports.default = exports.xaiService;
 //# sourceMappingURL=xaiService.js.map

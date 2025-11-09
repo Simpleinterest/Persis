@@ -3,65 +3,58 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.socketAuthMiddleware = exports.authenticateSocket = void 0;
+exports.setupSocketAuth = exports.authenticateSocket = void 0;
 const jwt_1 = require("../utils/jwt");
 const User_1 = __importDefault(require("../models/User"));
 const Coach_1 = __importDefault(require("../models/Coach"));
 /**
  * Authenticate socket connection using JWT token
  */
-const authenticateSocket = async (socket, token) => {
+const authenticateSocket = async (socket, next) => {
     try {
+        // Get token from handshake auth or query
+        const token = socket.handshake.auth?.token ||
+            socket.handshake.query?.token ||
+            (0, jwt_1.extractTokenFromHeader)(socket.handshake.headers.authorization);
+        if (!token) {
+            return next(new Error('Authentication error: No token provided'));
+        }
+        // Verify token
         const decoded = (0, jwt_1.verifyToken)(token);
         // Verify user/coach exists
         if (decoded.type === 'user') {
             const user = await User_1.default.findById(decoded.id);
             if (!user) {
-                return false;
+                return next(new Error('Authentication error: User not found'));
             }
             socket.userId = decoded.id;
             socket.userType = 'user';
-            socket.userName = decoded.userName;
+            socket.userName = user.userName;
         }
         else if (decoded.type === 'coach') {
             const coach = await Coach_1.default.findById(decoded.id);
             if (!coach) {
-                return false;
+                return next(new Error('Authentication error: Coach not found'));
             }
             socket.userId = decoded.id;
             socket.userType = 'coach';
-            socket.userName = decoded.userName;
+            socket.userName = coach.userName;
         }
         else {
-            return false;
+            return next(new Error('Authentication error: Invalid user type'));
         }
-        return true;
+        next();
     }
     catch (error) {
-        return false;
+        next(new Error(`Authentication error: ${error.message}`));
     }
 };
 exports.authenticateSocket = authenticateSocket;
 /**
- * Socket authentication middleware
+ * Setup socket authentication middleware
  */
-const socketAuthMiddleware = (io) => {
-    io.use(async (socket, next) => {
-        try {
-            const token = socket.handshake.auth.token || socket.handshake.headers.authorization?.split(' ')[1];
-            if (!token) {
-                return next(new Error('Authentication error: No token provided'));
-            }
-            const isAuthenticated = await (0, exports.authenticateSocket)(socket, token);
-            if (!isAuthenticated) {
-                return next(new Error('Authentication error: Invalid token'));
-            }
-            next();
-        }
-        catch (error) {
-            next(new Error('Authentication error: ' + error.message));
-        }
-    });
+const setupSocketAuth = (io) => {
+    io.use(exports.authenticateSocket);
 };
-exports.socketAuthMiddleware = socketAuthMiddleware;
+exports.setupSocketAuth = setupSocketAuth;
 //# sourceMappingURL=socketAuth.js.map
