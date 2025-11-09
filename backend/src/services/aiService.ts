@@ -176,7 +176,7 @@ Guidelines:
       // Get AI response
       const response = await xaiService.chatCompletion({
         messages,
-        model: 'grok-3',
+        model: 'grok-2',
         temperature: 0.7, // Balanced for conversational but technical tone
         max_tokens: 200, // Reduced to enforce conciseness
       });
@@ -224,7 +224,7 @@ Guidelines:
       // Stream AI response
       yield* xaiService.streamChatCompletion({
         messages,
-        model: 'grok-3',
+        model: 'grok-2',
         temperature: 0.7, // Balanced for conversational but technical tone
         max_tokens: 200, // Reduced from 1000 to enforce conciseness
       });
