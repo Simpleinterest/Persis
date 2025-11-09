@@ -9,6 +9,10 @@ const dotenv_1 = __importDefault(require("dotenv"));
 dotenv_1.default.config();
 const XAI_API_KEY = process.env.XAI_API_KEY || '';
 const XAI_API_URL = 'https://api.x.ai/v1/chat/completions';
+// Validate API key format on startup
+if (XAI_API_KEY && !XAI_API_KEY.startsWith('xai-')) {
+    console.warn('⚠️  XAI_API_KEY format may be incorrect. Expected format: xai-...');
+}
 if (!XAI_API_KEY) {
     console.warn('⚠️  XAI_API_KEY not found in environment variables');
 }
@@ -31,7 +35,7 @@ class XAIService {
                 throw new Error('XAI API key is not configured');
             }
             const payload = {
-                model: request.model || 'grok-3',
+                model: request.model || 'grok-2',
                 messages: request.messages,
                 temperature: request.temperature ?? 0.7,
                 max_tokens: request.max_tokens ?? 1000,
@@ -41,8 +45,28 @@ class XAIService {
             return response.data;
         }
         catch (error) {
-            console.error('XAI API Error:', error.response?.data || error.message);
-            throw new Error(`XAI API request failed: ${error.response?.data?.error?.message || error.message}`);
+            // Enhanced error logging
+            const errorDetails = {
+                status: error.response?.status,
+                statusText: error.response?.statusText,
+                data: error.response?.data,
+                message: error.message,
+            };
+            console.error('XAI API Error Details:', JSON.stringify(errorDetails, null, 2));
+            // Try to extract more specific error message
+            let errorMessage = error.message;
+            if (error.response?.status === 403) {
+                errorMessage = 'XAI API returned 403 Forbidden. This usually means: 1) API key is invalid or revoked, 2) API key lacks required permissions, or 3) The endpoint/model is not accessible with this key. Please check your API key in the XAI console.';
+            }
+            else if (error.response?.data) {
+                if (typeof error.response.data === 'string') {
+                    errorMessage = error.response.data;
+                }
+                else if (error.response.data.error?.message) {
+                    errorMessage = error.response.data.error.message;
+                }
+            }
+            throw new Error(`XAI API request failed: ${errorMessage}`);
         }
     }
     async *streamChatCompletion(request) {
@@ -51,12 +75,17 @@ class XAIService {
                 throw new Error('XAI API key is not configured');
             }
             const payload = {
-                model: request.model || 'grok-3',
+                model: request.model || 'grok-2',
                 messages: request.messages,
                 temperature: request.temperature ?? 0.7,
                 max_tokens: request.max_tokens ?? 1000,
                 stream: true,
             };
+            console.log('XAI Stream Request:', {
+                model: payload.model,
+                messageCount: payload.messages.length,
+                hasApiKey: !!this.apiKey,
+            });
             const response = await this.axiosInstance.post('', payload, {
                 responseType: 'stream',
             });
@@ -82,8 +111,30 @@ class XAIService {
             }
         }
         catch (error) {
-            console.error('XAI Stream Error:', error.response?.data || error.message);
-            throw new Error(`XAI stream request failed: ${error.message}`);
+            // Enhanced error logging
+            const errorDetails = {
+                status: error.response?.status,
+                statusText: error.response?.statusText,
+                data: error.response?.data,
+                message: error.message,
+                apiKeyPresent: !!this.apiKey,
+                apiKeyLength: this.apiKey?.length || 0,
+            };
+            console.error('XAI Stream Error Details:', JSON.stringify(errorDetails, null, 2));
+            // Try to extract more specific error message
+            let errorMessage = error.message;
+            if (error.response?.status === 403) {
+                errorMessage = 'XAI API returned 403 Forbidden. This usually means: 1) API key is invalid or revoked, 2) API key lacks required permissions, or 3) The endpoint/model is not accessible with this key. Please check your API key in the XAI console.';
+            }
+            else if (error.response?.data) {
+                if (typeof error.response.data === 'string') {
+                    errorMessage = error.response.data;
+                }
+                else if (error.response.data.error?.message) {
+                    errorMessage = error.response.data.error.message;
+                }
+            }
+            throw new Error(`XAI stream request failed: ${errorMessage}`);
         }
     }
     async analyzeVideo(description, context, aiContext) {
@@ -118,7 +169,7 @@ class XAIService {
             ];
             const response = await this.chatCompletion({
                 messages,
-                model: 'grok-3',
+                model: 'grok-2',
                 temperature: 0.6, // Lower temperature for more consistent, technical responses
                 max_tokens: maxTokens,
             });
