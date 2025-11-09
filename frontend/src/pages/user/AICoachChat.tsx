@@ -1,8 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 import websocketService from '../../services/websocketService';
 import authService from '../../services/authService';
+import userService from '../../services/userService';
 import { Message, AIResponse, VideoAnalysis } from '../../types/chat.types';
-import Navbar from '../../components/layout/Navbar';
+import Sidebar from '../../components/layout/Sidebar';
+import cvService from '../../services/cvService';
+import { Results } from '@mediapipe/pose';
 import './AICoachChat.css';
 
 const AICoachChat: React.FC = () => {
@@ -14,10 +17,19 @@ const AICoachChat: React.FC = () => {
   const [isConnected, setIsConnected] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const frameIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const cvFrameIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const streamingMessageIdRef = useRef<string | null>(null);
   const streamingMessageIndexRef = useRef<number>(-1);
+  const poseResultsRef = useRef<Results | null>(null);
+  const lastAnalysisTimeRef = useRef<number>(0);
+  const [poseDescription, setPoseDescription] = useState<string>('No pose detected');
+  const [showUploadModal, setShowUploadModal] = useState(false);
+  const [allowCoachView, setAllowCoachView] = useState(true);
+  const [uploadingVideo, setUploadingVideo] = useState(false);
+  const [pendingVideoFile, setPendingVideoFile] = useState<File | null>(null);
 
   useEffect(() => {
     // Connect to WebSocket - use a ref to prevent multiple connections
@@ -231,13 +243,259 @@ const AICoachChat: React.FC = () => {
     }
   }, []); // Empty dependency array - only run once
 
+  // Initialize CV service on mount
+  useEffect(() => {
+    const initializeCV = async () => {
+      try {
+        await cvService.initialize((results: Results) => {
+          poseResultsRef.current = results;
+          
+          // Draw pose on canvas when in live mode
+          // Check isLiveMode via ref or state - use a check that works
+          if (canvasRef.current && videoRef.current && results.poseLandmarks) {
+            // Only draw if video is playing (indicates live mode is active)
+            if (videoRef.current.readyState >= 2 && !videoRef.current.paused) {
+              cvService.drawPoseOnCanvas(canvasRef.current, results, videoRef.current);
+              
+              // Update pose description for display
+              const description = cvService.getPoseDescription(results);
+              setPoseDescription(description);
+            }
+          } else if (canvasRef.current && videoRef.current) {
+            // Clear canvas and update description if no pose detected
+            if (videoRef.current.readyState >= 2 && !videoRef.current.paused) {
+              const ctx = canvasRef.current.getContext('2d');
+              if (ctx && canvasRef.current.width > 0 && canvasRef.current.height > 0) {
+                ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+                // Redraw video frame without pose overlay
+                ctx.drawImage(videoRef.current, 0, 0, canvasRef.current.width, canvasRef.current.height);
+              }
+              setPoseDescription('No pose detected - Position yourself in front of the camera');
+            }
+          }
+        });
+        console.log('✅ CV service initialized');
+      } catch (error) {
+        console.error('Failed to initialize CV service:', error);
+      }
+    };
+
+    initializeCV();
+
+    return () => {
+      cvService.cleanup();
+    };
+  }, []); // Run once on mount
+
+  // Effect to handle video stream when live mode is enabled
+  useEffect(() => {
+    if (!isLiveMode || !streamRef.current) {
+      // Stop CV processing when live mode is off
+      if (cvFrameIntervalRef.current) {
+        clearInterval(cvFrameIntervalRef.current);
+        // Clear analysis interval if it exists
+        if ((cvFrameIntervalRef.current as any).analysisInterval) {
+          clearInterval((cvFrameIntervalRef.current as any).analysisInterval);
+        }
+        cvFrameIntervalRef.current = null;
+      }
+      return;
+    }
+
+    // Use a small delay to ensure video element is rendered
+    const timer = setTimeout(() => {
+      if (videoRef.current && streamRef.current) {
+        console.log('Attaching stream to video element');
+        // Ensure video element has the stream
+        if (videoRef.current.srcObject !== streamRef.current) {
+          videoRef.current.srcObject = streamRef.current;
+        }
+        
+        // Set video properties
+        videoRef.current.playsInline = true;
+        videoRef.current.muted = true;
+        
+        // Wait for video metadata, then play
+        const handleLoadedMetadata = () => {
+          if (videoRef.current) {
+            videoRef.current.play()
+              .then(() => {
+                console.log('Video playing successfully');
+                // Start CV processing once video is playing
+                if (cvFrameIntervalRef.current) {
+                  clearInterval(cvFrameIntervalRef.current);
+                  if ((cvFrameIntervalRef.current as any).analysisInterval) {
+                    clearInterval((cvFrameIntervalRef.current as any).analysisInterval);
+                  }
+                }
+
+                // Process frames for pose detection at ~30 FPS
+                cvFrameIntervalRef.current = setInterval(() => {
+                  if (videoRef.current && videoRef.current.readyState >= 2 && !videoRef.current.paused) {
+                    cvService.processFrame(videoRef.current);
+                  }
+                }, 33); // ~30 FPS
+
+                // Send frames with pose data for AI analysis every 3 seconds
+                const currentRoomId = roomId;
+                const analysisInterval = setInterval(() => {
+                  if (videoRef.current && poseResultsRef.current && currentRoomId && !videoRef.current.paused) {
+                    const now = Date.now();
+                    // Only send analysis if we have pose data and enough time has passed
+                    if (now - lastAnalysisTimeRef.current > 3000) {
+                      if (videoRef.current && poseResultsRef.current && currentRoomId) {
+                        try {
+                          // Get video frame as image data
+                          const canvas = document.createElement('canvas');
+                          canvas.width = videoRef.current.videoWidth;
+                          canvas.height = videoRef.current.videoHeight;
+                          const ctx = canvas.getContext('2d');
+                          
+                          if (ctx) {
+                            ctx.drawImage(videoRef.current, 0, 0);
+                            const imageData = canvas.toDataURL('image/jpeg', 0.8);
+
+                            // Get pose landmarks
+                            const landmarks = cvService.convertLandmarksToArray(poseResultsRef.current);
+                            const poseDesc = cvService.getPoseDescription(poseResultsRef.current);
+
+                            // Send to backend for AI analysis
+                            websocketService.sendVideoAnalysis(
+                              {
+                                image: imageData,
+                                landmarks: landmarks,
+                                poseDescription: poseDesc,
+                                timestamp: new Date().toISOString(),
+                              },
+                              'form',
+                              undefined,
+                              currentRoomId
+                            );
+                          }
+                        } catch (error) {
+                          console.error('Error sending frame for analysis:', error);
+                        }
+                      }
+                      lastAnalysisTimeRef.current = now;
+                    }
+                  }
+                }, 3000);
+
+                // Store analysis interval
+                (cvFrameIntervalRef.current as any).analysisInterval = analysisInterval;
+              })
+              .catch((error) => {
+                console.error('Error playing video:', error);
+              });
+          }
+        };
+
+        if (videoRef.current.readyState >= 2) {
+          // Video metadata already loaded
+          handleLoadedMetadata();
+        } else {
+          // Wait for metadata
+          videoRef.current.addEventListener('loadedmetadata', handleLoadedMetadata, { once: true });
+          // Also try playing immediately as fallback
+          videoRef.current.play().catch(() => {
+            // Ignore errors here, we'll try again in loadedmetadata handler
+          });
+        }
+      } else {
+        console.warn('Video element or stream not available');
+      }
+    }, 50);
+
+    return () => {
+      clearTimeout(timer);
+      if (cvFrameIntervalRef.current) {
+        clearInterval(cvFrameIntervalRef.current);
+        // Clear analysis interval if it exists
+        if ((cvFrameIntervalRef.current as any).analysisInterval) {
+          clearInterval((cvFrameIntervalRef.current as any).analysisInterval);
+        }
+        cvFrameIntervalRef.current = null;
+      }
+    };
+  }, [isLiveMode, roomId]); // Run when isLiveMode or roomId changes
+
+  // Start CV processing for pose detection
+  const startCVProcessing = () => {
+    // Clear any existing intervals
+    if (cvFrameIntervalRef.current) {
+      clearInterval(cvFrameIntervalRef.current);
+      // Clear analysis interval if it exists
+      if ((cvFrameIntervalRef.current as any).analysisInterval) {
+        clearInterval((cvFrameIntervalRef.current as any).analysisInterval);
+      }
+    }
+
+    // Process frames for pose detection at ~30 FPS
+    cvFrameIntervalRef.current = setInterval(() => {
+      if (videoRef.current && videoRef.current.readyState >= 2 && !videoRef.current.paused) {
+        cvService.processFrame(videoRef.current);
+      }
+    }, 33); // ~30 FPS
+
+    // Send frames with pose data for AI analysis every 3 seconds
+    // Use current roomId from closure
+    const currentRoomId = roomId;
+    const analysisInterval = setInterval(() => {
+      if (videoRef.current && poseResultsRef.current && currentRoomId && !videoRef.current.paused) {
+        const now = Date.now();
+        // Only send analysis if we have pose data and enough time has passed
+        if (now - lastAnalysisTimeRef.current > 3000) {
+          // Create a temporary function that uses currentRoomId
+          if (videoRef.current && poseResultsRef.current && currentRoomId) {
+            try {
+              // Get video frame as image data
+              const canvas = document.createElement('canvas');
+              canvas.width = videoRef.current.videoWidth;
+              canvas.height = videoRef.current.videoHeight;
+              const ctx = canvas.getContext('2d');
+              
+              if (ctx) {
+                ctx.drawImage(videoRef.current, 0, 0);
+                const imageData = canvas.toDataURL('image/jpeg', 0.8);
+
+                // Get pose landmarks
+                const landmarks = cvService.convertLandmarksToArray(poseResultsRef.current);
+                const poseDesc = cvService.getPoseDescription(poseResultsRef.current);
+
+                // Send to backend for AI analysis
+                websocketService.sendVideoAnalysis(
+                  {
+                    image: imageData,
+                    landmarks: landmarks,
+                    poseDescription: poseDesc,
+                    timestamp: new Date().toISOString(),
+                  },
+                  'form',
+                  undefined,
+                  currentRoomId
+                );
+              }
+            } catch (error) {
+              console.error('Error sending frame for analysis:', error);
+            }
+          }
+          lastAnalysisTimeRef.current = now;
+        }
+      }
+    }, 3000);
+
+    // Store analysis interval
+    (cvFrameIntervalRef.current as any).analysisInterval = analysisInterval;
+  };
 
   useEffect(() => {
     scrollToBottom();
-  }, [messages]);
+  }, [messages, isLiveMode]);
 
   const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (messagesEndRef.current) {
+      messagesEndRef.current.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
   };
 
   const handleSendMessage = () => {
@@ -283,34 +541,18 @@ const AICoachChat: React.FC = () => {
       if (!roomId) return;
 
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: true,
+        video: {
+          facingMode: 'user', // Default to built-in webcam
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+        },
         audio: false,
       });
 
       streamRef.current = stream;
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        videoRef.current.play();
-      }
-
       setIsLiveMode(true);
       setIsStreaming(true);
       websocketService.startStream(roomId);
-
-      // Send video frames periodically for analysis
-      frameIntervalRef.current = setInterval(() => {
-        if (videoRef.current && streamRef.current) {
-          const canvas = document.createElement('canvas');
-          canvas.width = videoRef.current.videoWidth;
-          canvas.height = videoRef.current.videoHeight;
-          const ctx = canvas.getContext('2d');
-          if (ctx && videoRef.current.videoWidth > 0 && videoRef.current.videoHeight > 0) {
-            ctx.drawImage(videoRef.current, 0, 0);
-            const imageData = canvas.toDataURL('image/jpeg', 0.8);
-            websocketService.sendStreamData(roomId, { frame: imageData });
-          }
-        }
-      }, 2000); // Send frame every 2 seconds
 
       websocketService.onStreamStarted((data) => {
         console.log('Stream started:', data);
@@ -322,6 +564,16 @@ const AICoachChat: React.FC = () => {
   };
 
   const stopLiveMode = () => {
+    // Clear CV frame interval
+    if (cvFrameIntervalRef.current) {
+      clearInterval(cvFrameIntervalRef.current);
+      // Clear analysis interval if it exists
+      if ((cvFrameIntervalRef.current as any).analysisInterval) {
+        clearInterval((cvFrameIntervalRef.current as any).analysisInterval);
+      }
+      cvFrameIntervalRef.current = null;
+    }
+
     // Clear frame interval
     if (frameIntervalRef.current) {
       clearInterval(frameIntervalRef.current);
@@ -339,6 +591,14 @@ const AICoachChat: React.FC = () => {
       videoRef.current.srcObject = null;
     }
 
+    // Clear canvas
+    if (canvasRef.current) {
+      const ctx = canvasRef.current.getContext('2d');
+      if (ctx) {
+        ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+      }
+    }
+
     // Stop stream on server
     if (roomId) {
       websocketService.stopStream(roomId);
@@ -346,31 +606,75 @@ const AICoachChat: React.FC = () => {
 
     setIsLiveMode(false);
     setIsStreaming(false);
+    setPoseDescription('No pose detected');
   };
 
-  const handleUploadVideo = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !roomId) return;
 
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const videoData = event.target?.result;
-      if (videoData) {
-        // Send video for analysis
-        websocketService.sendVideoAnalysis(videoData, 'form', undefined, roomId);
-        
-        const uploadMessage: Message = {
-          id: `upload-${Date.now()}`,
-          from: (authService.getStoredUser() as any)?._id || '',
-          to: 'ai-coach',
-          message: 'Video uploaded for analysis',
-          timestamp: new Date(),
-          type: 'video',
-        };
-        setMessages((prev) => [...prev, uploadMessage]);
-      }
-    };
-    reader.readAsDataURL(file);
+    // Check file size (limit to 50MB)
+    if (file.size > 50 * 1024 * 1024) {
+      alert('Video file is too large. Please upload a video smaller than 50MB.');
+      return;
+    }
+
+    // Store the file and show modal for permission setting
+    setPendingVideoFile(file);
+    setShowUploadModal(true);
+    
+    // Reset file input
+    e.target.value = '';
+  };
+
+  const handleConfirmUpload = async () => {
+    const file = pendingVideoFile;
+    if (!file || !roomId) {
+      setShowUploadModal(false);
+      return;
+    }
+
+    try {
+      setUploadingVideo(true);
+      
+      // Upload video with permission setting using FormData
+      await userService.uploadVideo(file, allowCoachView, 'form', undefined);
+      
+      // Also send video for real-time analysis via WebSocket (as base64 for WebSocket)
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const videoData = event.target?.result as string;
+        if (videoData) {
+          websocketService.sendVideoAnalysis(videoData, 'form', undefined, roomId);
+        }
+      };
+      reader.readAsDataURL(file);
+      
+      const uploadMessage: Message = {
+        id: `upload-${Date.now()}`,
+        from: (authService.getStoredUser() as any)?._id || '',
+        to: 'ai-coach',
+        message: 'Video uploaded for analysis',
+        timestamp: new Date(),
+        type: 'video',
+      };
+      setMessages((prev) => [...prev, uploadMessage]);
+      
+      setShowUploadModal(false);
+      setAllowCoachView(true);
+      setPendingVideoFile(null);
+    } catch (error: any) {
+      console.error('Failed to upload video:', error);
+      alert('Failed to upload video. Please try again.');
+    } finally {
+      setUploadingVideo(false);
+    }
+  };
+
+  const handleCancelUpload = () => {
+    setShowUploadModal(false);
+    setAllowCoachView(true);
+    setPendingVideoFile(null);
   };
 
   const formatTime = (date: Date) => {
@@ -379,86 +683,227 @@ const AICoachChat: React.FC = () => {
 
   return (
     <div className="ai-coach-chat">
-      <Navbar />
-      <div className="chat-header">
-        <div className="header-info">
-          <div className="ai-avatar">🤖</div>
-          <div>
-            <h2>AI Coach</h2>
-            <p className="status">
-              {isConnected ? (
-                <span className="online">Online</span>
-              ) : (
-                <span className="offline">Connecting...</span>
-              )}
-            </p>
+      <Sidebar />
+      <div className="chat-main">
+        {/* Header - always rendered, hidden only in live mode */}
+        {!isLiveMode && (
+          <div className="chat-header">
+            <div className="header-content">
+              <div className="header-text">
+                <h1>AI Coach</h1>
+                <p className="header-subtitle">Get instant feedback and guidance</p>
+              </div>
+              <div className="header-actions">
+                <button
+                  className="live-mode-btn"
+                  onClick={toggleLiveMode}
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <rect x="2" y="4" width="20" height="16" rx="2" stroke="currentColor" strokeWidth="2" fill="none"/>
+                    <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="2" fill="none"/>
+                    <circle cx="12" cy="12" r="1" fill="currentColor"/>
+                  </svg>
+                  <span>Start Live Mode</span>
+                </button>
+              </div>
+            </div>
           </div>
-        </div>
-        <div className="header-actions">
-          <button
-            className={`live-mode-btn ${isLiveMode ? 'active' : ''}`}
-            onClick={toggleLiveMode}
-          >
-            {isLiveMode ? '🛑 Stop Live Mode' : '📹 Start Live Mode'}
-          </button>
-          <label className="upload-video-btn">
-            <input
-              type="file"
-              accept="video/*"
-              onChange={handleUploadVideo}
-              style={{ display: 'none' }}
-            />
-            📤 Upload Video
-          </label>
+        )}
+        
+        {/* Live Mode Button - appears in live mode */}
+        {isLiveMode && (
+          <div className="live-mode-button-container">
+            <button
+              className="live-mode-btn live-active"
+              onClick={toggleLiveMode}
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <rect x="2" y="4" width="20" height="16" rx="2" stroke="currentColor" strokeWidth="2" fill="none"/>
+                <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="2" fill="none"/>
+                <circle cx="12" cy="12" r="1" fill="currentColor"/>
+              </svg>
+              <span>Stop Live Mode</span>
+            </button>
+          </div>
+        )}
+
+        <div className={`chat-content ${isLiveMode ? 'live-mode-active' : ''}`}>
+          <div className="live-video-container">
+            {isLiveMode && (
+              <>
+                <div className="video-wrapper">
+                  <video 
+                    ref={videoRef} 
+                    autoPlay 
+                    muted 
+                    playsInline
+                    className="live-video" 
+                  />
+                  <canvas 
+                    ref={canvasRef} 
+                    className="pose-canvas"
+                  />
+                </div>
+                <div className="pose-info-panel">
+                  <div className="pose-info-header">
+                    <span>Pose Detection</span>
+                  </div>
+                  <div className="pose-info-content">
+                    <p className="pose-description-text">{poseDescription}</p>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+
+          {/* Chat Overlay - appears when live mode is active */}
+          {isLiveMode && (
+            <div className="chat-overlay visible">
+              <div className="chat-overlay-messages">
+                {messages
+                  .filter((message) => message.from === 'ai-coach')
+                  .map((message) => (
+                    <div
+                      key={message.id}
+                      className="overlay-message ai-bubble"
+                    >
+                      <div className="overlay-message-text">{message.message}</div>
+                    </div>
+                  ))}
+                <div ref={messagesEndRef} />
+              </div>
+            </div>
+          )}
+
+          {/* Regular Chat View - when live mode is off */}
+          {!isLiveMode && (
+            <>
+              <div className="chat-messages">
+                {messages.map((message) => (
+                  <div
+                    key={message.id}
+                    className={`message ${message.from === 'ai-coach' ? 'ai-message' : 'user-message'}`}
+                  >
+                    <div className="message-avatar">
+                      {message.from === 'ai-coach' ? (
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                          <rect x="3" y="3" width="18" height="18" rx="3" stroke="currentColor" strokeWidth="2" fill="none"/>
+                          <circle cx="9" cy="9" r="2" fill="currentColor"/>
+                          <path d="M21 15l-3.086-3.086a2 2 0 0 0-2.828 0L6 21" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+                        </svg>
+                      ) : (
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                          <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                          <circle cx="12" cy="7" r="4" stroke="currentColor" strokeWidth="2" fill="none"/>
+                        </svg>
+                      )}
+                    </div>
+                    <div className="message-content">
+                      <div className="message-text">{message.message}</div>
+                      <div className="message-time">{formatTime(message.timestamp)}</div>
+                    </div>
+                  </div>
+                ))}
+                <div ref={messagesEndRef} />
+              </div>
+
+              <div className="chat-input-section">
+                <div className="preview-label">Preview</div>
+                <div className="chat-input-container">
+                  <label className="upload-video-btn">
+                    <input
+                      type="file"
+                      accept="video/*"
+                      onChange={handleFileSelect}
+                      style={{ display: 'none' }}
+                    />
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                      <polyline points="17 8 12 3 7 8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                      <line x1="12" y1="3" x2="12" y2="15" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                    </svg>
+                    <span>Upload Video</span>
+                  </label>
+                  <input
+                    type="text"
+                    className="chat-input"
+                    placeholder="Ask your AI coach anything..."
+                    value={inputMessage}
+                    onChange={(e) => setInputMessage(e.target.value)}
+                    onKeyPress={handleKeyPress}
+                    disabled={!isConnected}
+                  />
+                  <button
+                    className="send-button"
+                    onClick={handleSendMessage}
+                    disabled={!inputMessage.trim() || !isConnected}
+                  >
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      <line x1="22" y1="2" x2="11" y2="13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                      <polygon points="22 2 15 22 11 13 2 9 22 2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" fill="none"/>
+                    </svg>
+                  </button>
+                </div>
+                <button className="help-button">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" fill="none"/>
+                    <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                    <line x1="12" y1="17" x2="12.01" y2="17" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+                  </svg>
+                </button>
+              </div>
+            </>
+          )}
         </div>
       </div>
 
-      {isLiveMode && (
-        <div className="live-video-container">
-          <video ref={videoRef} autoPlay muted className="live-video" />
-          <div className="live-indicator">
-            <span className="pulse"></span>
-            Live
+      {/* Upload Video Modal */}
+      {showUploadModal && (
+        <div className="modal-overlay" onClick={handleCancelUpload}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Upload Video</h2>
+              <button 
+                className="modal-close"
+                onClick={handleCancelUpload}
+              >
+                ×
+              </button>
+            </div>
+            <div className="modal-body">
+              <p>Allow your coach to view this video?</p>
+              <div className="form-group">
+                <label className="checkbox-label">
+                  <input
+                    type="checkbox"
+                    checked={allowCoachView}
+                    onChange={(e) => setAllowCoachView(e.target.checked)}
+                  />
+                  <span>Share with my coach</span>
+                </label>
+              </div>
+            </div>
+            <div className="modal-actions">
+              <button 
+                type="button" 
+                className="btn-cancel"
+                onClick={handleCancelUpload}
+                disabled={uploadingVideo}
+              >
+                Cancel
+              </button>
+              <button 
+                type="button" 
+                className="btn-submit"
+                onClick={handleConfirmUpload}
+                disabled={uploadingVideo}
+              >
+                {uploadingVideo ? 'Uploading...' : 'Upload & Analyze'}
+              </button>
+            </div>
           </div>
         </div>
       )}
-
-      <div className="chat-messages">
-        {messages.map((message) => (
-          <div
-            key={message.id}
-            className={`message ${message.from === 'ai-coach' ? 'ai-message' : 'user-message'}`}
-          >
-            <div className="message-avatar">
-              {message.from === 'ai-coach' ? '🤖' : '👤'}
-            </div>
-            <div className="message-content">
-              <div className="message-text">{message.message}</div>
-              <div className="message-time">{formatTime(message.timestamp)}</div>
-            </div>
-          </div>
-        ))}
-        <div ref={messagesEndRef} />
-      </div>
-
-      <div className="chat-input-container">
-        <input
-          type="text"
-          className="chat-input"
-          placeholder="Ask your AI coach anything..."
-          value={inputMessage}
-          onChange={(e) => setInputMessage(e.target.value)}
-          onKeyPress={handleKeyPress}
-          disabled={!isConnected}
-        />
-        <button
-          className="send-button"
-          onClick={handleSendMessage}
-          disabled={!inputMessage.trim() || !isConnected}
-        >
-          ➤
-        </button>
-      </div>
     </div>
   );
 };
