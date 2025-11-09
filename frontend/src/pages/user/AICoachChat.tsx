@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import websocketService from '../../services/websocketService';
 import authService from '../../services/authService';
 import { Message, AIResponse, VideoAnalysis } from '../../types/chat.types';
+import Navbar from '../../components/layout/Navbar';
 import './AICoachChat.css';
 
 const AICoachChat: React.FC = () => {
@@ -25,6 +26,7 @@ const AICoachChat: React.FC = () => {
     try {
       if (!authService.isAuthenticated()) {
         console.error('User not authenticated');
+        // Redirect handled by ProtectedRoute
         return;
       }
 
@@ -377,6 +379,7 @@ const AICoachChat: React.FC = () => {
 
   return (
     <div className="ai-coach-chat">
+      <Navbar />
       <div className="chat-header">
         <div className="header-info">
           <div className="ai-avatar">🤖</div>
