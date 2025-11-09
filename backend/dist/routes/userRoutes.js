@@ -9,7 +9,10 @@ router.use(auth_1.authenticateUser);
 // User profile routes
 router.get('/profile', userController_1.getUserProfile);
 router.put('/profile', userController_1.updateUserProfile);
-// Coach assignment routes
+// Progress routes
+router.get('/progress', userController_1.getUserProgress);
+// Coach routes
+router.get('/coaches', userController_1.getUserCoaches);
 router.post('/request-coach/:coachId', userController_1.requestCoach);
 router.delete('/coach', userController_1.removeCoach);
 // Coach request routes

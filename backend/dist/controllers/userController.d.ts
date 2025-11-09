@@ -35,4 +35,12 @@ export declare const uploadVideo: import("express").RequestHandler<import("expre
  * Update video permission for coach viewing
  */
 export declare const updateVideoPermission: (req: Request, res: Response) => Promise<void>;
+/**
+ * Get user progress data
+ */
+export declare const getUserProgress: (req: Request, res: Response) => Promise<void>;
+/**
+ * Get user's coaches
+ */
+export declare const getUserCoaches: (req: Request, res: Response) => Promise<void>;
 //# sourceMappingURL=userController.d.ts.map

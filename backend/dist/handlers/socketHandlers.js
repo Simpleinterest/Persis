@@ -308,7 +308,7 @@ const setupSocketHandlers = (io) => {
                     analysis: { status: 'processing', message: 'Analyzing video...' },
                     type: data.analysisType,
                 });
-                // Analyze video (may return null if feedback should be suppressed)
+                // Always analyze video (analysis will be marked as suppressed if feedback shouldn't be shown)
                 const analysis = await aiService_1.default.analyzeVideo({
                     videoData: data.videoData,
                     analysisType: data.analysisType,
@@ -316,29 +316,32 @@ const setupSocketHandlers = (io) => {
                     exerciseType: data.exerciseType,
                     context,
                 });
-                // Only send feedback if analysis was provided (not suppressed)
+                // Always save analysis to database for progress tracking, even if feedback is suppressed
                 if (analysis) {
                     // Get user's coach ID
                     const user = await User_1.default.findById(socket.userId);
                     const coachId = user?.coachId || null;
-                    // Save video analysis to database for coach viewing
+                    // Save video analysis to database (always save for progress tracking)
                     try {
                         const videoAnalysis = new VideoAnalysis_1.default({
                             userId: socket.userId,
                             coachId: coachId,
                             type: 'live',
                             summary: analysis.analysis.formFeedback || 'Form analysis complete',
-                            feedback: analysis.analysis.formFeedback || null,
+                            feedback: analysis.suppressed ? null : (analysis.analysis.formFeedback || null), // Don't store feedback if suppressed
                             poseData: data.videoData?.landmarks || null,
                             metrics: {
                                 score: analysis.analysis.score || 75,
                                 exerciseType: data.exerciseType || 'general',
                                 analysisType: analysis.type,
+                                suppressed: analysis.suppressed || false, // Track if this was suppressed
                             },
+                            sportMetrics: analysis.analysis.sportMetrics || null, // Store sport-specific structured metrics
+                            timestampedFeedback: analysis.analysis.timestampedFeedback || [], // Store time-stamped feedback
                             duration: data.videoData?.duration || 0,
                             coachVisible: true, // Live footage always visible to coach
                             studentPermission: true,
-                            sessionId: data.videoData?.sessionId || `session-${Date.now()}`,
+                            sessionId: data.videoData?.sessionId || `session-${socket.userId}-${Date.now()}`,
                         });
                         await videoAnalysis.save();
                     }
@@ -346,25 +349,28 @@ const setupSocketHandlers = (io) => {
                         console.error('Failed to save video analysis:', saveError);
                         // Don't fail the request if saving fails
                     }
-                    // Send analysis results
-                    socket.emit('ai_analysis_complete', {
-                        analysis: analysis.analysis,
-                        type: analysis.type,
-                    });
-                    // Also create a message with the analysis for the chat
-                    const analysisMessage = {
-                        id: `${Date.now()}-analysis-${socket.id}`,
-                        from: 'ai-coach',
-                        to: socket.userId,
-                        message: analysis.analysis.formFeedback || 'Form analysis complete',
-                        timestamp: analysis.timestamp,
-                        type: 'video',
-                    };
-                    socket.emit('new_message', analysisMessage);
-                }
-                else {
-                    // Feedback was suppressed (too soon or duplicate) - silently skip
-                    // Don't send any message to avoid spam
+                    // Only send feedback to user if not suppressed
+                    if (!analysis.suppressed) {
+                        // Send analysis results
+                        socket.emit('ai_analysis_complete', {
+                            analysis: analysis.analysis,
+                            type: analysis.type,
+                        });
+                        // Also create a message with the analysis for the chat
+                        const analysisMessage = {
+                            id: `${Date.now()}-analysis-${socket.id}`,
+                            from: 'ai-coach',
+                            to: socket.userId,
+                            message: analysis.analysis.formFeedback || 'Form analysis complete',
+                            timestamp: analysis.timestamp,
+                            type: 'video',
+                        };
+                        socket.emit('new_message', analysisMessage);
+                    }
+                    else {
+                        // Feedback was suppressed - save silently for progress tracking but don't show to user
+                        // The analysis is still saved to the database for dashboard tracking
+                    }
                 }
             }
             catch (error) {

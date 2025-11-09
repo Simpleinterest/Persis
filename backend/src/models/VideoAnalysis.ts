@@ -41,6 +41,25 @@ const VideoAnalysisSchema: Schema = new Schema(
       type: Schema.Types.Mixed,
       default: {}, // Can store form scores, exercise type, etc.
     },
+    sportMetrics: {
+      type: Schema.Types.Mixed,
+      default: null, // Sport-specific structured metrics
+    },
+    timestampedFeedback: {
+      type: [{
+        timestamp: Date,
+        feedback: String,
+        category: {
+          type: String,
+          enum: ['form', 'safety', 'technique', 'encouragement'],
+        },
+        severity: {
+          type: String,
+          enum: ['low', 'medium', 'high'],
+        },
+      }],
+      default: [],
+    },
     duration: {
       type: Number, // Duration in seconds
       default: 0,

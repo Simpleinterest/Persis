@@ -3,7 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.updateVideoPermission = exports.uploadVideo = exports.removeCoach = exports.requestCoach = exports.rejectCoachRequest = exports.acceptCoachRequest = exports.getCoachRequests = exports.updateUserProfile = exports.getUserProfile = void 0;
+exports.getUserCoaches = exports.getUserProgress = exports.updateVideoPermission = exports.uploadVideo = exports.removeCoach = exports.requestCoach = exports.rejectCoachRequest = exports.acceptCoachRequest = exports.getCoachRequests = exports.updateUserProfile = exports.getUserProfile = void 0;
 const User_1 = __importDefault(require("../models/User"));
 const Coach_1 = __importDefault(require("../models/Coach"));
 const CoachRequest_1 = __importDefault(require("../models/CoachRequest"));
@@ -436,4 +436,190 @@ const updateVideoPermission = async (req, res) => {
     }
 };
 exports.updateVideoPermission = updateVideoPermission;
+/**
+ * Get user progress data
+ */
+const getUserProgress = async (req, res) => {
+    try {
+        const authReq = req;
+        const userId = authReq.user?.id;
+        const { period } = req.query; // 'week', 'month', 'year', '2years'
+        if (!userId) {
+            res.status(401).json({ error: 'Not authenticated' });
+            return;
+        }
+        // Calculate date range based on period
+        const now = new Date();
+        let startDate;
+        switch (period) {
+            case 'week':
+                startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+                break;
+            case 'month':
+                startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+                break;
+            case 'year':
+                startDate = new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000);
+                break;
+            case '2years':
+                startDate = new Date(now.getTime() - 730 * 24 * 60 * 60 * 1000);
+                break;
+            default:
+                startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000); // Default to month
+        }
+        // Get video analyses for the user within the date range
+        const { sport } = req.query; // Optional sport filter
+        const query = {
+            userId: userId,
+            createdAt: { $gte: startDate, $lte: now },
+        };
+        // Filter by sport if provided
+        if (sport && sport !== 'all') {
+            query['metrics.exerciseType'] = sport;
+        }
+        const analyses = await VideoAnalysis_1.default.find(query)
+            .sort({ createdAt: 1 })
+            .lean();
+        // Process data for charts
+        const progressData = analyses.map((analysis) => {
+            const metrics = analysis.metrics || {};
+            return {
+                date: analysis.createdAt,
+                formScore: (metrics.score && typeof metrics.score === 'number') ? metrics.score : 75,
+                exerciseType: (metrics.exerciseType && typeof metrics.exerciseType === 'string') ? metrics.exerciseType : 'general',
+                analysisType: (metrics.analysisType && typeof metrics.analysisType === 'string') ? metrics.analysisType : 'form',
+                duration: (analysis.duration && typeof analysis.duration === 'number') ? analysis.duration : 0,
+                sportMetrics: analysis.sportMetrics || null,
+                timestampedFeedback: analysis.timestampedFeedback || [],
+                sessionId: analysis.sessionId || null,
+            };
+        });
+        // Calculate statistics
+        const formScores = progressData.map(d => d.formScore).filter(s => s > 0);
+        const avgFormScore = formScores.length > 0
+            ? Math.round(formScores.reduce((sum, score) => sum + score, 0) / formScores.length)
+            : 0;
+        const totalSessions = analyses.length;
+        const totalDuration = progressData.reduce((sum, d) => sum + (d.duration || 0), 0);
+        // Group by exercise type
+        const exerciseCounts = {};
+        progressData.forEach(d => {
+            exerciseCounts[d.exerciseType] = (exerciseCounts[d.exerciseType] || 0) + 1;
+        });
+        // Calculate improvement trend
+        let improvementTrend = 0;
+        if (formScores.length >= 2) {
+            const firstHalf = formScores.slice(0, Math.floor(formScores.length / 2));
+            const secondHalf = formScores.slice(Math.floor(formScores.length / 2));
+            const firstAvg = firstHalf.reduce((sum, s) => sum + s, 0) / firstHalf.length;
+            const secondAvg = secondHalf.reduce((sum, s) => sum + s, 0) / secondHalf.length;
+            improvementTrend = Math.round(secondAvg - firstAvg);
+        }
+        // Aggregate timestamped feedback for common mistakes analysis
+        const allFeedback = analyses
+            .flatMap((analysis) => analysis.timestampedFeedback || [])
+            .filter((f) => f && f.feedback);
+        // Extract common mistakes/feedback patterns
+        const commonMistakes = {};
+        allFeedback.forEach((f) => {
+            if (f.category === 'form' || f.category === 'safety') {
+                // Simple keyword extraction for common mistakes
+                const keywords = extractMistakeKeywords(f.feedback);
+                keywords.forEach(keyword => {
+                    commonMistakes[keyword] = (commonMistakes[keyword] || 0) + 1;
+                });
+            }
+        });
+        // Get session reviews (group by sessionId)
+        const sessionReviews = {};
+        analyses.forEach((analysis) => {
+            if (analysis.sessionId && analysis.timestampedFeedback && analysis.timestampedFeedback.length > 0) {
+                if (!sessionReviews[analysis.sessionId]) {
+                    sessionReviews[analysis.sessionId] = [];
+                }
+                sessionReviews[analysis.sessionId].push(...analysis.timestampedFeedback);
+            }
+        });
+        res.json({
+            period,
+            startDate,
+            endDate: now,
+            progressData,
+            statistics: {
+                avgFormScore,
+                totalSessions,
+                totalDuration,
+                improvementTrend,
+                exerciseCounts,
+            },
+            commonMistakes: Object.entries(commonMistakes)
+                .sort((a, b) => b[1] - a[1])
+                .slice(0, 10)
+                .map(([mistake, count]) => ({ mistake, count })),
+            sessionReviews: Object.entries(sessionReviews).map(([sessionId, feedback]) => ({
+                sessionId,
+                feedback: feedback.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()),
+                date: feedback[0]?.timestamp || new Date(),
+            })),
+        });
+    }
+    catch (error) {
+        console.error('Error fetching user progress:', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+};
+exports.getUserProgress = getUserProgress;
+/**
+ * Extract mistake keywords from feedback text
+ */
+function extractMistakeKeywords(feedback) {
+    const keywords = [];
+    const lower = feedback.toLowerCase();
+    // Common mistake patterns
+    const patterns = [
+        { pattern: /knee.*cav/i, keyword: 'Knee Caving' },
+        { pattern: /back.*round/i, keyword: 'Rounded Back' },
+        { pattern: /shoulder.*drop/i, keyword: 'Shoulder Drop' },
+        { pattern: /hip.*shift/i, keyword: 'Hip Shift' },
+        { pattern: /overexten/i, keyword: 'Overextension' },
+        { pattern: /depth.*shallow/i, keyword: 'Shallow Depth' },
+        { pattern: /alignment/i, keyword: 'Poor Alignment' },
+        { pattern: /balance/i, keyword: 'Balance Issues' },
+        { pattern: /core.*engage/i, keyword: 'Weak Core' },
+        { pattern: /posture/i, keyword: 'Posture Issues' },
+    ];
+    patterns.forEach(({ pattern, keyword }) => {
+        if (pattern.test(lower)) {
+            keywords.push(keyword);
+        }
+    });
+    return keywords.length > 0 ? keywords : ['Form Issue'];
+}
+/**
+ * Get user's coaches
+ */
+const getUserCoaches = async (req, res) => {
+    try {
+        const authReq = req;
+        const userId = authReq.user?.id;
+        if (!userId) {
+            res.status(401).json({ error: 'Not authenticated' });
+            return;
+        }
+        const user = await User_1.default.findById(userId).populate('coachId', 'userName profile sports');
+        if (!user) {
+            res.status(404).json({ error: 'User not found' });
+            return;
+        }
+        const coaches = [];
+        if (user.coachId) {
+            coaches.push(user.coachId);
+        }
+        res.json({ coaches });
+    }
+    catch (error) {
+        res.status(500).json({ error: 'Internal server error' });
+    }
+};
+exports.getUserCoaches = getUserCoaches;
 //# sourceMappingURL=userController.js.map

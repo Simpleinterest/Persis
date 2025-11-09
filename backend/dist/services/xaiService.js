@@ -90,7 +90,7 @@ class XAIService {
         try {
             // Build system prompt with stateful behavior guidelines
             let systemPrompt = `You are Persis, a professional AI fitness coach specializing in real-time form analysis. Your feedback is technical, specific, and actionable.`;
-            // Use the system prompt from AI context if available (it includes state tracking info)
+            // Use the system prompt from AI context if available (it includes state tracking info and sport-specific instructions)
             if (aiContext && aiContext.systemPrompt) {
                 systemPrompt = aiContext.systemPrompt;
             }
@@ -108,7 +108,10 @@ class XAIService {
 - Focus on safety: point out potential injury risks immediately
 - Be precise: "Your knee is caving inward 5 degrees" is better than "Watch your knee alignment"`;
             }
-            const userPrompt = `Video Description: ${description}\n\nContext: ${context}\n\nAnalyze the workout form and provide SPECIFIC, TECHNICAL feedback. Focus on actionable corrections based on what you observe in the pose data. Only provide feedback if there's a significant form issue, state change, or safety concern.`;
+            // Increase max_tokens if structured output is requested
+            const requestStructuredOutput = aiContext?.requestStructuredOutput || false;
+            const maxTokens = requestStructuredOutput ? 500 : 100; // More tokens for structured JSON + feedback
+            const userPrompt = `Video Description: ${description}\n\nContext: ${context}\n\nAnalyze the workout form and provide SPECIFIC, TECHNICAL feedback. Focus on actionable corrections based on what you observe in the pose data. Only provide feedback if there's a significant form issue, state change, or safety concern.${requestStructuredOutput ? '\n\nIMPORTANT: Return a JSON object with structured metrics followed by your feedback text.' : ''}`;
             const messages = [
                 { role: 'system', content: systemPrompt },
                 { role: 'user', content: userPrompt },
@@ -117,7 +120,7 @@ class XAIService {
                 messages,
                 model: 'grok-3',
                 temperature: 0.6, // Lower temperature for more consistent, technical responses
-                max_tokens: 100, // Very short for live feedback
+                max_tokens: maxTokens,
             });
             return response.choices[0]?.message?.content || 'Unable to analyze video at this time.';
         }

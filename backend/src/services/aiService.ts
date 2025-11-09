@@ -4,6 +4,7 @@ import User from '../models/User';
 import Coach from '../models/Coach';
 import { getOrCreateRoom, generateRoomId } from './socketService';
 import { detectStateFromPose, updateUserState, shouldProvideFeedback, recordFeedback, getStateContext } from './stateTrackingService';
+import { getSportMetrics, parseSportMetrics, TimestampedFeedback } from '../types/sport.types';
 
 /**
  * AI Service
@@ -13,8 +14,14 @@ class AIService {
   /**
    * Build system prompt with user context and coach parameters
    */
-  private buildSystemPrompt(context: AIChatContext, isVideoAnalysis: boolean = false): string {
+  private buildSystemPrompt(context: AIChatContext, isVideoAnalysis: boolean = false, exerciseType?: string): string {
     let prompt = `You are Persis, a professional AI fitness coach. You provide technical, actionable feedback based on exercise form and technique.`;
+    
+    // Add sport-specific context
+    if (exerciseType && exerciseType !== 'general') {
+      const sportMetrics = getSportMetrics(exerciseType);
+      prompt += `\n\nYou are analyzing a ${exerciseType} exercise. Key metrics to evaluate: ${sportMetrics.join(', ')}.`;
+    }
 
     // Add user profile context
     if (context.userProfile) {
@@ -49,6 +56,29 @@ class AIService {
 - Use anatomical terms when helpful: "knees", "hips", "spine", "shoulders", "elbows"
 - Focus on safety: point out potential injury risks immediately
 - Be precise: "Your knee is caving inward 5 degrees" is better than "Watch your knee alignment"`;
+
+      // Add sport-specific analysis instructions
+      if (exerciseType && exerciseType !== 'general') {
+        prompt += `\n\nFor ${exerciseType} analysis, focus on:`;
+        const metrics = getSportMetrics(exerciseType);
+        metrics.forEach(metric => {
+          prompt += `\n- ${metric.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}: Evaluate and provide specific feedback`;
+        });
+        
+        // Request structured output
+        prompt += `\n\nIMPORTANT: When providing feedback, also return a JSON object with structured metrics in this format:
+{
+  "metrics": [
+    {"name": "metric_name", "value": number, "unit": "unit", "target": number},
+    ...
+  ],
+  "feedback": "Your feedback text here",
+  "category": "form|safety|technique|encouragement",
+  "severity": "low|medium|high"
+}
+
+Return the JSON object first, followed by the feedback text.`;
+      }
 
       // Add state context if available
       if (context.stateContext) {
@@ -272,28 +302,64 @@ Guidelines:
         videoDescription = 'Pose landmarks not detected - user may be out of frame or pose incomplete';
       }
 
-      // Build system prompt for video analysis
-      const systemPrompt = this.buildSystemPrompt(context, true);
+      // Build system prompt for video analysis (with exercise type)
+      const systemPrompt = this.buildSystemPrompt(context, true, request.exerciseType);
 
-      // Analyze using XAI with stateful context
-      const analysisText = await xaiService.analyzeVideo(videoDescription, contextString, { systemPrompt });
+      // Analyze using XAI with stateful context and request structured output
+      const analysisText = await xaiService.analyzeVideo(
+        videoDescription, 
+        contextString, 
+        { 
+          systemPrompt,
+          exerciseType: request.exerciseType,
+          requestStructuredOutput: true,
+        }
+      );
 
-      // Check if we should provide this feedback (avoid spam)
-      if (!shouldProvideFeedback(request.userId, analysisText)) {
-        // Don't provide feedback - it's too soon or duplicate
-        return null;
+      // Check if we should provide this feedback to the user (avoid spam in UI)
+      // But we'll always save the analysis for progress tracking
+      const shouldShowFeedback = shouldProvideFeedback(request.userId, analysisText);
+      const isSuppressed = !shouldShowFeedback;
+
+      // Parse structured metrics from AI response
+      const { metrics: sportMetrics, feedback: feedbackText } = parseSportMetrics(
+        request.exerciseType || 'general',
+        analysisText || 'Form analysis complete',
+        landmarks
+      );
+      
+      // Record the feedback only if we're going to show it to the user
+      if (shouldShowFeedback && feedbackText) {
+        recordFeedback(request.userId, feedbackText);
       }
 
-      // Record the feedback
-      recordFeedback(request.userId, analysisText);
-
-      // Parse analysis into structured response
-      const analysis = this.parseVideoAnalysis(analysisText, request.analysisType);
+      // Create timestamped feedback entry
+      const timestampedFeedback: TimestampedFeedback = {
+        timestamp: new Date(),
+        feedback: feedbackText,
+        category: this.categorizeFeedback(feedbackText),
+        severity: this.assessSeverity(feedbackText),
+      };
+      
+      // Always parse analysis (for progress tracking), even if feedback is suppressed
+      const finalFeedbackText = isSuppressed 
+        ? 'Form analysis in progress - monitoring form' 
+        : feedbackText;
+      
+      const analysis = this.parseVideoAnalysis(
+        finalFeedbackText, 
+        request.analysisType,
+        landmarks,
+        request.exerciseType,
+        sportMetrics,
+        timestampedFeedback
+      );
 
       return {
         analysis,
         type: request.analysisType,
         timestamp: new Date(),
+        suppressed: isSuppressed, // Mark if feedback should be suppressed from UI
       };
     } catch (error: any) {
       console.error('Video analysis error:', error);
@@ -302,13 +368,180 @@ Guidelines:
   }
 
   /**
+   * Calculate form score from pose landmarks
+   */
+  private calculateFormScore(landmarks: any[], poseDescription: string, exerciseType?: string): number {
+    if (!landmarks || landmarks.length === 0) {
+      return 50; // Low score if no pose detected
+    }
+
+    let score = 75; // Base score
+    let deductions = 0;
+    let bonuses = 0;
+
+    try {
+      // Convert landmarks to a more usable format
+      const landmarkMap: { [key: number]: { x: number; y: number; z?: number; visibility?: number } } = {};
+      landmarks.forEach((lm: any, index: number) => {
+        if (typeof lm === 'object' && lm.x !== undefined && lm.y !== undefined) {
+          landmarkMap[index] = {
+            x: lm.x,
+            y: lm.y,
+            z: lm.z,
+            visibility: lm.visibility || 1,
+          };
+        }
+      });
+
+      // Check key body parts visibility
+      const keyPoints = [0, 2, 5, 7, 8, 11, 12, 13, 14, 15, 16, 23, 24, 25, 26]; // Key body landmarks
+      const visiblePoints = keyPoints.filter(idx => {
+        const point = landmarkMap[idx];
+        return point && (point.visibility === undefined || point.visibility > 0.5);
+      }).length;
+      
+      const visibilityScore = (visiblePoints / keyPoints.length) * 100;
+      if (visibilityScore < 70) {
+        deductions += (70 - visibilityScore) * 0.3; // Deduct for poor visibility
+      }
+
+      // Exercise-specific scoring
+      if (exerciseType === 'squats' || exerciseType === 'lunges') {
+        // Check knee alignment (landmarks 25, 26 are knees; 23, 24 are hips)
+        if (landmarkMap[25] && landmarkMap[26] && landmarkMap[23] && landmarkMap[24]) {
+          const leftKneeX = landmarkMap[25].x;
+          const leftHipX = landmarkMap[23].x;
+          const rightKneeX = landmarkMap[26].x;
+          const rightHipX = landmarkMap[24].x;
+          
+          const leftAlignment = Math.abs(leftKneeX - leftHipX);
+          const rightAlignment = Math.abs(rightKneeX - rightHipX);
+          
+          // Good alignment (knee over hip) should have small difference
+          if (leftAlignment > 0.1 || rightAlignment > 0.1) {
+            deductions += 5; // Deduct for poor knee alignment
+          } else {
+            bonuses += 5; // Bonus for good alignment
+          }
+        }
+
+        // Check depth (hip y position relative to knee)
+        if (landmarkMap[23] && landmarkMap[24] && landmarkMap[25] && landmarkMap[26]) {
+          const avgHipY = (landmarkMap[23].y + landmarkMap[24].y) / 2;
+          const avgKneeY = (landmarkMap[25].y + landmarkMap[26].y) / 2;
+          const depth = avgHipY - avgKneeY;
+          
+          if (depth > 0.1) {
+            bonuses += 3; // Bonus for good depth
+          } else if (depth < 0.05) {
+            deductions += 5; // Deduct for shallow depth
+          }
+        }
+      }
+
+      // Check spine alignment (landmarks 11, 12 are shoulders; 23, 24 are hips)
+      if (landmarkMap[11] && landmarkMap[12] && landmarkMap[23] && landmarkMap[24]) {
+        const shoulderMidX = (landmarkMap[11].x + landmarkMap[12].x) / 2;
+        const hipMidX = (landmarkMap[23].x + landmarkMap[24].x) / 2;
+        const alignment = Math.abs(shoulderMidX - hipMidX);
+        
+        if (alignment < 0.05) {
+          bonuses += 5; // Bonus for good spine alignment
+        } else if (alignment > 0.1) {
+          deductions += 5; // Deduct for poor alignment
+        }
+      }
+
+      // Check shoulder level (for upper body exercises)
+      if (exerciseType === 'pushups' || exerciseType === 'planks' || exerciseType === 'overhead_press') {
+        if (landmarkMap[11] && landmarkMap[12]) {
+          const shoulderLevel = Math.abs(landmarkMap[11].y - landmarkMap[12].y);
+          if (shoulderLevel < 0.03) {
+            bonuses += 5; // Bonus for level shoulders
+          } else if (shoulderLevel > 0.1) {
+            deductions += 8; // Deduct for uneven shoulders
+          }
+        }
+      }
+
+      // Calculate final score
+      score = Math.max(0, Math.min(100, score + bonuses - deductions));
+      
+      // Adjust based on visibility
+      score = score * (visibilityScore / 100);
+      score = Math.round(score);
+    } catch (error) {
+      console.error('Error calculating form score:', error);
+      // Return base score if calculation fails
+    }
+
+    return Math.max(50, Math.min(100, score)); // Clamp between 50-100
+  }
+
+  /**
+   * Categorize feedback into types
+   */
+  private categorizeFeedback(feedback: string): 'form' | 'safety' | 'technique' | 'encouragement' {
+    const lower = feedback.toLowerCase();
+    if (lower.includes('danger') || lower.includes('risk') || lower.includes('injury') || lower.includes('unsafe')) {
+      return 'safety';
+    }
+    if (lower.includes('good') || lower.includes('excellent') || lower.includes('great') || lower.includes('well')) {
+      return 'encouragement';
+    }
+    if (lower.includes('technique') || lower.includes('method') || lower.includes('approach')) {
+      return 'technique';
+    }
+    return 'form';
+  }
+
+  /**
+   * Assess feedback severity
+   */
+  private assessSeverity(feedback: string): 'low' | 'medium' | 'high' {
+    const lower = feedback.toLowerCase();
+    if (lower.includes('critical') || lower.includes('danger') || lower.includes('immediate') || lower.includes('stop')) {
+      return 'high';
+    }
+    if (lower.includes('significant') || lower.includes('major') || lower.includes('important')) {
+      return 'medium';
+    }
+    return 'low';
+  }
+
+  /**
    * Parse AI analysis text into structured format
    */
-  private parseVideoAnalysis(analysisText: string, analysisType: string): VideoAnalysisResponse['analysis'] {
+  private parseVideoAnalysis(
+    analysisText: string, 
+    analysisType: string, 
+    landmarks?: any[], 
+    exerciseType?: string,
+    sportMetrics?: any[],
+    timestampedFeedback?: TimestampedFeedback
+  ): VideoAnalysisResponse['analysis'] {
+    // Calculate form score from pose data or sport metrics
+    let calculatedScore = 75;
+    if (sportMetrics && sportMetrics.length > 0) {
+      // Calculate average from sport metrics
+      const scores = sportMetrics.map(m => {
+        if (m.target !== undefined && m.value !== undefined) {
+          const ratio = m.value / m.target;
+          return Math.min(100, ratio * 100);
+        }
+        return m.value || 75;
+      });
+      calculatedScore = scores.reduce((sum, s) => sum + s, 0) / scores.length;
+    } else if (landmarks && landmarks.length > 0) {
+      calculatedScore = this.calculateFormScore(landmarks, '', exerciseType);
+    }
+
     // Simple parsing - in production, you might use more sophisticated NLP
     const analysis: VideoAnalysisResponse['analysis'] = {
       formFeedback: analysisText,
-      score: 75, // Default score, would be calculated from CV analysis
+      score: Math.round(calculatedScore), // Use calculated score instead of default
+      sportMetrics: sportMetrics || [],
+      timestampedFeedback: timestampedFeedback ? [timestampedFeedback] : [],
     };
 
     // Extract tips and recommendations (simple pattern matching)

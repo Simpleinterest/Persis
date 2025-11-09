@@ -72,9 +72,17 @@ export interface VideoAnalysisResponse {
     progressNotes?: string;
     recommendations?: string[];
     score?: number; // 0-100
+    sportMetrics?: any[]; // Sport-specific structured metrics
+    timestampedFeedback?: Array<{
+      timestamp: Date;
+      feedback: string;
+      category: 'form' | 'safety' | 'technique' | 'encouragement';
+      severity: 'low' | 'medium' | 'high';
+    }>;
   };
   type: string;
   timestamp: Date;
+  suppressed?: boolean; // True if feedback was suppressed (spam prevention)
 }
 
 export interface AIStreamChunk {
