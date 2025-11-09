@@ -26,7 +26,6 @@ export function calculate_angle_2d(a: Landmark, b: Landmark, c: Landmark): numbe
   const magBC = Math.sqrt(bc.x * bc.x + bc.y * bc.y);
 
   // 3. Calculate cosine and angle
-  // Add a small epsilon to avoid division by zero
   const epsilon = 1e-6;
   let cosTheta = dotProduct / (magBA * magBC + epsilon);
 
@@ -43,3 +42,16 @@ export function calculate_angle_2d(a: Landmark, b: Landmark, c: Landmark): numbe
   return angle;
 }
 
+/**
+ * Calculates the angle of a line (p1-p2) relative to a perfect vertical line.
+ * 
+ * @param p1 The first point (e.g., shoulder)
+ * @param p2 The second point (e.g., hip)
+ * @returns The angle in degrees (0 = vertical, 90 = horizontal)
+ */
+export function calculate_vertical_angle(p1: Landmark, p2: Landmark): number {
+  const p3 = { x: p2.x, y: p2.y - 1 }; // A point vertically "up" from p2
+
+  // We use p2 as the vertex
+  return calculate_angle_2d(p1, p2, p3);
+}

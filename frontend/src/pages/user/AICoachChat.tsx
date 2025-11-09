@@ -6,12 +6,16 @@ import { Message, AIResponse, VideoAnalysis } from '../../types/chat.types';
 import Sidebar from '../../components/layout/Sidebar';
 import cvService from '../../services/cvService';
 import { Results } from '@mediapipe/pose';
+import CVAnalyzer from '../../components/CVAnalyzer';
+import { ExerciseAnalyzer, SquatAnalyzer, RowingAnalyzer, SimplePoseAnalyzer } from '../../logic/analyzers';
 import './AICoachChat.css';
 
 const AICoachChat: React.FC = () => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputMessage, setInputMessage] = useState('');
   const [isLiveMode, setIsLiveMode] = useState(false);
+  const [showExerciseModal, setShowExerciseModal] = useState(false);
+  const [selectedAnalyzer, setSelectedAnalyzer] = useState<ExerciseAnalyzer | null>(null);
   const [isStreaming, setIsStreaming] = useState(false);
   const [roomId, setRoomId] = useState<string | null>(null);
   const [isConnected, setIsConnected] = useState(false);
@@ -543,6 +547,22 @@ const AICoachChat: React.FC = () => {
     }
   };
 
+  const handleExerciseSelect = (exercise: 'SQUAT' | 'ROWING' | 'SIMPLE') => {
+    let analyzer: ExerciseAnalyzer;
+
+    if (exercise === 'SQUAT') {
+      analyzer = new SquatAnalyzer();
+    } else if (exercise === 'ROWING') {
+      analyzer = new RowingAnalyzer();
+    } else {
+      analyzer = new SimplePoseAnalyzer();
+    }
+
+    setSelectedAnalyzer(analyzer);
+    setShowExerciseModal(false);
+    setIsLiveMode(true);
+  };
+
   const startLiveMode = async () => {
     try {
       if (!roomId) return;
@@ -649,6 +669,7 @@ const AICoachChat: React.FC = () => {
     setIsLiveMode(false);
     setIsStreaming(false);
     setPoseDescription('No pose detected');
+    setSelectedAnalyzer(null); // Clear the analyzer
   };
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -738,7 +759,7 @@ const AICoachChat: React.FC = () => {
               <div className="header-actions">
                 <button
                   className="live-mode-btn"
-                  onClick={toggleLiveMode}
+                  onClick={() => setShowExerciseModal(true)}
                 >
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                     <rect x="2" y="4" width="20" height="16" rx="2" stroke="currentColor" strokeWidth="2" fill="none"/>
@@ -756,8 +777,11 @@ const AICoachChat: React.FC = () => {
         {isLiveMode && (
           <div className="live-mode-button-container">
             <button
-              className="live-mode-btn live-active"
-              onClick={toggleLiveMode}
+              className="live-mode-btn live-active stop-live-button"
+              onClick={() => {
+                setIsLiveMode(false);
+                setSelectedAnalyzer(null);
+              }}
             >
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                 <rect x="2" y="4" width="20" height="16" rx="2" stroke="currentColor" strokeWidth="2" fill="none"/>
@@ -770,33 +794,33 @@ const AICoachChat: React.FC = () => {
         )}
 
         <div className={`chat-content ${isLiveMode ? 'live-mode-active' : ''}`}>
-          <div className="live-video-container">
-            {isLiveMode && (
-              <>
-                <div className="video-wrapper">
-                  <video 
-                    ref={videoRef} 
-                    autoPlay 
-                    muted 
-                    playsInline
-                    className="live-video" 
-                  />
-                  <canvas 
-                    ref={canvasRef} 
-                    className="pose-canvas"
-                  />
-                </div>
-                <div className="pose-info-panel">
-                  <div className="pose-info-header">
-                    <span>Pose Detection</span>
-                  </div>
-                  <div className="pose-info-content">
-                    <p className="pose-description-text">{poseDescription}</p>
-                  </div>
-                </div>
-              </>
+          <div className="live-video-container video-area">
+            {/* --- The CV Analyzer --- */}
+            {isLiveMode && selectedAnalyzer && (
+              <CVAnalyzer analyzer={selectedAnalyzer} />
+            )}
+
+            {/* --- The "Live Mode Off" Placeholder --- */}
+            {!isLiveMode && (
+              <div className="video-placeholder">
+                <p>Live Mode is Off. Click "Start Live Mode" to begin.</p>
+              </div>
             )}
           </div>
+
+          {/* --- The Exercise Selection Modal --- (Outside container so it's always visible) */}
+          {showExerciseModal && (
+            <div className="exercise-modal-overlay" style={{ zIndex: 1000 }}>
+              <div className="exercise-modal-content">
+                <h2>Select an Exercise</h2>
+                <p>Choose an exercise to get live feedback.</p>
+                <button onClick={() => handleExerciseSelect('SQUAT')}>Squats</button>
+                <button onClick={() => handleExerciseSelect('ROWING')}>Rowing</button>
+                <button onClick={() => handleExerciseSelect('SIMPLE')}>Other (Simple Pose)</button>
+                <button onClick={() => setShowExerciseModal(false)}>Cancel</button>
+              </div>
+            </div>
+          )}
 
           {/* Chat Overlay - appears when live mode is active */}
           {isLiveMode && (
