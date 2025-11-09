@@ -1,0 +1,76 @@
+.radar-chart-container {
+  background-color: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  padding: 1.5rem;
+  margin-bottom: 2rem;
+}
+
+.radar-chart-header {
+  margin-bottom: 1rem;
+}
+
+.radar-chart-header h3 {
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: #F0E68C;
+  margin: 0;
+}
+
+.radar-chart-empty {
+  text-align: center;
+  padding: 3rem 1rem;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.radar-chart-empty p {
+  margin: 0.5rem 0;
+}
+
+.empty-hint {
+  font-size: 0.9rem;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.radar-chart-legend {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 0.75rem;
+  margin-top: 1.5rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.metric-legend-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.5rem;
+  background-color: rgba(255, 255, 255, 0.05);
+  border-radius: 6px;
+}
+
+.metric-name {
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 0.9rem;
+}
+
+.metric-value {
+  color: #F0E68C;
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.metric-target {
+  color: rgba(255, 255, 255, 0.5);
+  font-weight: 400;
+  font-size: 0.85rem;
+}
+
+@media (max-width: 768px) {
+  .radar-chart-legend {
+    grid-template-columns: 1fr;
+  }
+}
+

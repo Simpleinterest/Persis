@@ -16,6 +16,8 @@ dotenv.config();
 // Import models to ensure they are registered
 import './models/User';
 import './models/Coach';
+import './models/CoachRequest';
+import './models/VideoAnalysis';
 
 const app = express();
 const httpServer = createServer(app);

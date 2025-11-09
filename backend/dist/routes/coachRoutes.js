@@ -12,7 +12,8 @@ router.put('/profile', coachController_1.updateCoachProfile);
 // Students routes
 router.get('/students', coachController_1.getStudents);
 router.get('/students/:studentId', coachController_1.getStudent);
-router.post('/students/:studentId', coachController_1.addStudent);
+router.post('/students/request', coachController_1.requestStudentByUsername); // Request student by username
+router.post('/students/:studentId', coachController_1.addStudent); // Accept request and add student
 router.delete('/students/:studentId', coachController_1.removeStudent);
 // Sports routes
 router.get('/sports', coachController_1.getSports);
@@ -21,5 +22,8 @@ router.delete('/sports', coachController_1.removeSport);
 // AI parameters routes
 router.get('/students/:studentId/ai-parameters', coachController_1.getStudentAIParameters);
 router.put('/students/:studentId/ai-parameters', coachController_1.updateStudentAIParameters);
+// Video analysis routes
+router.get('/students/:studentId/video-analyses', coachController_1.getStudentVideoAnalyses);
+router.get('/students/:studentId/videos', coachController_1.getStudentVideos);
 exports.default = router;
 //# sourceMappingURL=coachRoutes.js.map

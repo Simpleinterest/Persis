@@ -12,7 +12,11 @@ export declare const getStudents: (req: Request, res: Response) => Promise<void>
  */
 export declare const getStudent: (req: Request, res: Response) => Promise<void>;
 /**
- * Add a student to coach's list (student must request first, but for simplicity we'll allow direct addition)
+ * Request to add a student by username
+ */
+export declare const requestStudentByUsername: (req: Request, res: Response) => Promise<void>;
+/**
+ * Add a student to coach's list (after request is accepted)
  */
 export declare const addStudent: (req: Request, res: Response) => Promise<void>;
 /**
@@ -43,4 +47,12 @@ export declare const updateStudentAIParameters: (req: Request, res: Response) =>
  * Get AI parameters for a specific student
  */
 export declare const getStudentAIParameters: (req: Request, res: Response) => Promise<void>;
+/**
+ * Get video analyses for a specific student (live footage summaries)
+ */
+export declare const getStudentVideoAnalyses: (req: Request, res: Response) => Promise<void>;
+/**
+ * Get uploaded videos for a specific student (with permission)
+ */
+export declare const getStudentVideos: (req: Request, res: Response) => Promise<void>;
 //# sourceMappingURL=coachController.d.ts.map

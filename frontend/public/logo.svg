@@ -1,0 +1,23 @@
+<svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background circle -->
+  <circle cx="32" cy="32" r="30" fill="#F0E68C"/>
+  
+  <!-- Center circle -->
+  <circle cx="32" cy="32" r="3" fill="#363636"/>
+  
+  <!-- Three curved lines creating triskelion/propeller effect -->
+  <!-- Top-right curve -->
+  <path d="M32 32 L32 8 A24 24 0 0 1 56 32 Z" stroke="#363636" stroke-width="3" stroke-linecap="round" fill="none"/>
+  <!-- Bottom-right curve -->
+  <path d="M32 32 L56 32 A24 24 0 0 1 32 56 Z" stroke="#363636" stroke-width="3" stroke-linecap="round" fill="none"/>
+  <!-- Bottom-left curve -->
+  <path d="M32 32 L32 56 A24 24 0 0 1 8 32 Z" stroke="#363636" stroke-width="3" stroke-linecap="round" fill="none"/>
+  <!-- Top-left curve -->
+  <path d="M32 32 L8 32 A24 24 0 0 1 32 8 Z" stroke="#363636" stroke-width="3" stroke-linecap="round" fill="none"/>
+  
+  <!-- Four oval holes positioned between center and outer edge -->
+  <ellipse cx="32" cy="18" rx="2.5" ry="3.5" fill="#363636"/>
+  <ellipse cx="46" cy="32" rx="2.5" ry="3.5" fill="#363636"/>
+  <ellipse cx="32" cy="46" rx="2.5" ry="3.5" fill="#363636"/>
+  <ellipse cx="18" cy="32" rx="2.5" ry="3.5" fill="#363636"/>
+</svg>

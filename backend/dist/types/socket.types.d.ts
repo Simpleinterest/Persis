@@ -4,99 +4,125 @@ export interface AuthenticatedSocket extends Socket {
     userType?: 'user' | 'coach';
     userName?: string;
 }
-export interface ChatMessage {
-    id?: string;
-    senderId: string;
-    senderType: 'user' | 'coach' | 'ai';
-    receiverId?: string;
-    receiverType?: 'user' | 'coach';
+export interface SocketMessage {
+    id: string;
+    from: string;
+    to: string;
     message: string;
     timestamp: Date;
-    conversationId: string;
     type: 'text' | 'video' | 'system';
 }
-export interface ConversationRoom {
+export interface ChatRoom {
     id: string;
-    type: 'user-coach' | 'user-ai';
     participants: string[];
+    type: 'user-coach' | 'user-ai';
     createdAt: Date;
-    lastMessageAt?: Date;
 }
 export interface VideoStreamData {
     userId: string;
-    videoData: string;
+    streamId: string;
     timestamp: Date;
-    frameNumber?: number;
 }
-export interface AIFormCorrection {
-    userId: string;
-    exercise: string;
-    correction: string;
-    timestamp: Date;
-    severity: 'info' | 'warning' | 'error';
-}
-export interface SocketEvents {
-    'connection': () => void;
-    'disconnect': () => void;
-    'authenticate': (data: {
+export interface ClientToServerEvents {
+    authenticate: (data: {
         token: string;
     }) => void;
-    'auth-success': (data: {
-        userId: string;
-        userType: string;
+    join_room: (data: {
+        roomId: string;
     }) => void;
-    'auth-error': (error: string) => void;
-    'join-conversation': (data: {
-        conversationId: string;
+    leave_room: (data: {
+        roomId: string;
     }) => void;
-    'leave-conversation': (data: {
-        conversationId: string;
+    send_message: (data: {
+        roomId: string;
+        message: string;
+        type?: 'text' | 'video';
     }) => void;
-    'send-message': (data: ChatMessage) => void;
-    'receive-message': (data: ChatMessage) => void;
-    'message-sent': (data: {
+    start_stream: (data: {
+        roomId: string;
+    }) => void;
+    stop_stream: (data: {
+        roomId: string;
+    }) => void;
+    stream_data: (data: {
+        roomId: string;
+        streamData: any;
+    }) => void;
+    ai_chat_message: (data: {
+        message: string;
+        context?: string;
+    }) => void;
+    ai_video_analysis: (data: {
+        videoData: any;
+        analysisType: string;
+    }) => void;
+    coach_message: (data: {
+        studentId: string;
+        message: string;
+    }) => void;
+}
+export interface ServerToClientEvents {
+    authenticated: (data: {
+        success: boolean;
+        message?: string;
+    }) => void;
+    authentication_error: (data: {
+        error: string;
+    }) => void;
+    room_joined: (data: {
+        roomId: string;
+    }) => void;
+    room_left: (data: {
+        roomId: string;
+    }) => void;
+    new_message: (data: SocketMessage) => void;
+    message_error: (data: {
+        error: string;
+    }) => void;
+    stream_started: (data: {
+        roomId: string;
+        streamId: string;
+    }) => void;
+    stream_stopped: (data: {
+        roomId: string;
+    }) => void;
+    stream_data_received: (data: {
+        streamId: string;
+        data: any;
+    }) => void;
+    ai_response: (data: {
+        message: string;
+        analysis?: any;
+    }) => void;
+    ai_response_start: (data: {
         messageId: string;
+        timestamp: Date;
     }) => void;
-    'message-error': (error: string) => void;
-    'join-ai-chat': (data: {
-        userId: string;
-    }) => void;
-    'leave-ai-chat': (data: {
-        userId: string;
-    }) => void;
-    'send-ai-message': (data: {
-        userId: string;
+    ai_response_chunk: (data: {
+        messageId: string;
+        chunk: string;
         message: string;
     }) => void;
-    'receive-ai-message': (data: {
-        userId: string;
+    ai_response_complete: (data: {
+        messageId: string;
         message: string;
-        from: 'ai';
+        timestamp: Date;
     }) => void;
-    'start-live-stream': (data: {
-        userId: string;
+    ai_response_error: (data: {
+        messageId: string;
+        error: string;
     }) => void;
-    'stop-live-stream': (data: {
-        userId: string;
+    ai_analysis_complete: (data: {
+        analysis: any;
+        type: string;
     }) => void;
-    'video-frame': (data: VideoStreamData) => void;
-    'form-correction': (data: AIFormCorrection) => void;
-    'stream-status': (data: {
-        userId: string;
-        status: 'active' | 'inactive';
+    coach_message_received: (data: SocketMessage) => void;
+    error: (data: {
+        error: string;
     }) => void;
-    'upload-video': (data: {
-        userId: string;
-        videoData: string;
-        fileName: string;
-    }) => void;
-    'video-uploaded': (data: {
-        userId: string;
-        videoId: string;
-    }) => void;
-    'video-analysis': (data: {
-        userId: string;
-        analysis: string;
+    connection_status: (data: {
+        status: string;
+        message?: string;
     }) => void;
 }
 //# sourceMappingURL=socket.types.d.ts.map

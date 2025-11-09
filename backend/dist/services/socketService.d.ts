@@ -1,64 +1,51 @@
-import { Server } from 'socket.io';
-import { AuthenticatedSocket, ConversationRoom } from '../types/socket.types';
+import { Server as SocketIOServer } from 'socket.io';
+import { AuthenticatedSocket, ChatRoom } from '../types/socket.types';
 /**
- * Generate conversation ID
+ * Generate room ID for user-coach or user-ai chat
  */
-export declare const generateConversationId: (userId: string, coachId: string) => string;
+export declare const generateRoomId: (userId: string, otherId: string, type: "user-coach" | "user-ai") => string;
 /**
- * Get or create conversation room
+ * Create or get chat room
  */
-export declare const getOrCreateConversation: (userId: string, coachId: string) => ConversationRoom;
+export declare const getOrCreateRoom: (userId: string, otherId: string, type: "user-coach" | "user-ai") => ChatRoom;
 /**
- * Join user to socket room
+ * Join a room
  */
-export declare const joinUserToRoom: (socket: AuthenticatedSocket, roomId: string) => void;
+export declare const joinRoom: (socket: AuthenticatedSocket, roomId: string) => void;
 /**
- * Leave user from socket room
+ * Leave a room
  */
-export declare const leaveUserFromRoom: (socket: AuthenticatedSocket, roomId: string) => void;
+export declare const leaveRoom: (socket: AuthenticatedSocket, roomId: string) => void;
 /**
- * Register user socket
+ * Broadcast message to room
  */
-export declare const registerUserSocket: (userId: string, socketId: string) => void;
+export declare const broadcastToRoom: (io: SocketIOServer, roomId: string, event: string, data: any, excludeSocketId?: string) => void;
 /**
- * Unregister user socket
+ * Get user's rooms
  */
-export declare const unregisterUserSocket: (userId: string, socketId: string) => void;
+export declare const getUserRooms: (userId: string) => string[];
 /**
- * Get user socket IDs
+ * Register a socket for a user
  */
-export declare const getUserSocketIds: (userId: string) => string[];
+export declare const registerUserSocket: (socket: AuthenticatedSocket) => void;
 /**
- * Broadcast message to conversation room
+ * Unregister a socket for a user
  */
-export declare const broadcastToConversation: (io: Server, conversationId: string, event: string, data: any) => void;
+export declare const unregisterUserSocket: (socket: AuthenticatedSocket) => void;
 /**
- * Send message to specific user
+ * Get all sockets for a user
  */
-export declare const sendToUser: (io: Server, userId: string, event: string, data: any) => void;
+export declare const getUserSockets: (userId: string) => Set<string>;
 /**
- * Handle chat message
+ * Disconnect all sockets for a user (except the current one)
  */
-export declare const handleChatMessage: (io: Server, socket: AuthenticatedSocket, messageData: {
-    message: string;
-    conversationId: string;
-    receiverId?: string;
-}) => Promise<void>;
+export declare const disconnectOtherUserSockets: (io: SocketIOServer, userId: string, keepSocketId: string) => void;
 /**
- * Handle AI chat message
+ * Cleanup on disconnect
  */
-export declare const handleAIChatMessage: (io: Server, socket: AuthenticatedSocket, messageData: {
-    userId: string;
-    message: string;
-}) => Promise<void>;
+export declare const cleanupSocket: (socket: AuthenticatedSocket) => void;
 /**
- * Handle video frame streaming
+ * Verify user has access to room
  */
-export declare const handleVideoFrame: (io: Server, socket: AuthenticatedSocket, videoData: {
-    userId: string;
-    videoData: string;
-    frameNumber?: number;
-    exercise?: string;
-    frameDescription?: string;
-}) => Promise<void>;
+export declare const verifyRoomAccess: (socket: AuthenticatedSocket, roomId: string) => Promise<boolean>;
 //# sourceMappingURL=socketService.d.ts.map

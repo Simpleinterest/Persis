@@ -3,6 +3,7 @@ import {
   getStudents,
   getStudent,
   addStudent,
+  requestStudentByUsername,
   removeStudent,
   getSports,
   addSports,
@@ -11,6 +12,8 @@ import {
   updateStudentAIParameters,
   getStudentAIParameters,
   getCoachProfile,
+  getStudentVideoAnalyses,
+  getStudentVideos,
 } from '../controllers/coachController';
 import { authenticateCoach } from '../middleware/auth';
 
@@ -26,7 +29,8 @@ router.put('/profile', updateCoachProfile);
 // Students routes
 router.get('/students', getStudents);
 router.get('/students/:studentId', getStudent);
-router.post('/students/:studentId', addStudent);
+router.post('/students/request', requestStudentByUsername); // Request student by username
+router.post('/students/:studentId', addStudent); // Accept request and add student
 router.delete('/students/:studentId', removeStudent);
 
 // Sports routes
@@ -37,6 +41,10 @@ router.delete('/sports', removeSport);
 // AI parameters routes
 router.get('/students/:studentId/ai-parameters', getStudentAIParameters);
 router.put('/students/:studentId/ai-parameters', updateStudentAIParameters);
+
+// Video analysis routes
+router.get('/students/:studentId/video-analyses', getStudentVideoAnalyses);
+router.get('/students/:studentId/videos', getStudentVideos);
 
 export default router;
 

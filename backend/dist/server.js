@@ -13,7 +13,6 @@ const database_1 = __importDefault(require("./config/database"));
 const authRoutes_1 = __importDefault(require("./routes/authRoutes"));
 const userRoutes_1 = __importDefault(require("./routes/userRoutes"));
 const coachRoutes_1 = __importDefault(require("./routes/coachRoutes"));
-const aiRoutes_1 = __importDefault(require("./routes/aiRoutes"));
 const socketAuth_1 = require("./middleware/socketAuth");
 const socketHandlers_1 = require("./handlers/socketHandlers");
 // Load environment variables
@@ -21,21 +20,32 @@ dotenv_1.default.config();
 // Import models to ensure they are registered
 require("./models/User");
 require("./models/Coach");
+require("./models/CoachRequest");
+require("./models/VideoAnalysis");
 const app = (0, express_1.default)();
 exports.app = app;
 const httpServer = (0, http_1.createServer)(app);
+const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:3000";
 const io = new socket_io_1.Server(httpServer, {
     cors: {
-        origin: process.env.FRONTEND_URL || "http://localhost:3000",
+        origin: FRONTEND_URL,
         methods: ["GET", "POST"],
         credentials: true,
+        allowedHeaders: ["Authorization"],
     },
     allowEIO3: true,
+    pingTimeout: 60000,
+    pingInterval: 25000,
 });
 exports.io = io;
 const PORT = process.env.PORT || 5001;
 // Middleware
-app.use((0, cors_1.default)());
+app.use((0, cors_1.default)({
+    origin: FRONTEND_URL,
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+}));
 app.use(express_1.default.json());
 app.use(express_1.default.urlencoded({ extended: true }));
 // Basic route
@@ -59,25 +69,13 @@ app.use('/api/auth', authRoutes_1.default);
 app.use('/api/user', userRoutes_1.default);
 // Coach routes (protected)
 app.use('/api/coach', coachRoutes_1.default);
-// AI routes (protected)
-app.use('/api/ai', aiRoutes_1.default);
-// WebSocket authentication middleware
-(0, socketAuth_1.socketAuthMiddleware)(io);
+// WebSocket authentication
+(0, socketAuth_1.setupSocketAuth)(io);
 // WebSocket event handlers
 (0, socketHandlers_1.setupSocketHandlers)(io);
 // Connect to MongoDB and start server
 async function startServer() {
     try {
-        // Check XAI API configuration
-        if (!process.env.XAI_API_KEY) {
-            console.warn('⚠️  WARNING: XAI_API_KEY is not set in environment variables.');
-            console.warn('   AI chat features will not work without a valid XAI API key.');
-            console.warn('   Please set XAI_API_KEY in your .env file.');
-            console.warn('   Get your API key from: https://console.x.ai/');
-        }
-        else {
-            console.log('✅ XAI API key is configured');
-        }
         // Connect to database
         await (0, database_1.default)();
         // Start server
@@ -85,10 +83,6 @@ async function startServer() {
             console.log(`🚀 Persis API Server running on port ${PORT}`);
             console.log(`📡 WebSocket server ready for connections`);
             console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
-            console.log(`🔗 Frontend URL: ${process.env.FRONTEND_URL || 'http://localhost:3000'}`);
-            if (process.env.XAI_API_KEY) {
-                console.log(`🤖 XAI Model: ${process.env.XAI_MODEL || 'grok-3'}`);
-            }
         });
     }
     catch (error) {

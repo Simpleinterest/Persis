@@ -5,201 +5,431 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.setupSocketHandlers = void 0;
 const socketService_1 = require("../services/socketService");
-const conversationStore_1 = require("../services/conversationStore");
-const xaiService_1 = require("../services/xaiService");
 const User_1 = __importDefault(require("../models/User"));
 const Coach_1 = __importDefault(require("../models/Coach"));
+const VideoAnalysis_1 = __importDefault(require("../models/VideoAnalysis"));
+const aiService_1 = __importDefault(require("../services/aiService"));
+const stateTrackingService_1 = require("../services/stateTrackingService");
 /**
  * Setup socket event handlers
  */
 const setupSocketHandlers = (io) => {
     io.on('connection', (socket) => {
-        const userId = socket.userId;
-        const userType = socket.userType;
-        console.log(`✅ ${userType} connected: ${userId} (socket: ${socket.id})`);
-        // Register user socket
-        (0, socketService_1.registerUserSocket)(userId, socket.id);
+        // Register this socket for the user first
+        (0, socketService_1.registerUserSocket)(socket);
+        // Check for existing connections from the same user and disconnect duplicates
+        if (socket.userId) {
+            const existingSockets = (0, socketService_1.getUserSockets)(socket.userId);
+            if (existingSockets.size > 1) {
+                console.log(`⚠️  User ${socket.userName} (${socket.userId}) has ${existingSockets.size} connections. Disconnecting duplicates...`);
+                // Disconnect old connections, keep only the newest one
+                (0, socketService_1.disconnectOtherUserSockets)(io, socket.userId, socket.id);
+            }
+        }
+        console.log(`✅ Client connected: ${socket.id} (User: ${socket.userName}, Type: ${socket.userType})`);
         // Send authentication success
-        socket.emit('auth-success', {
-            userId: userId,
-            userType: userType,
+        socket.emit('authenticated', { success: true });
+        // Send connection status
+        socket.emit('connection_status', {
+            status: 'connected',
+            message: 'Successfully connected to Persis',
         });
-        // Join user to their personal room
-        const userRoom = `${userType}_${userId}`;
-        (0, socketService_1.joinUserToRoom)(socket, userRoom);
         /**
-         * Join conversation (User-Coach chat)
+         * Join a chat room
          */
-        socket.on('join-conversation', async (data) => {
+        socket.on('join_room', async (data) => {
             try {
-                let conversationUserId;
-                let conversationCoachId;
-                if (userType === 'user') {
-                    // Verify user has relationship with coach
-                    const user = await User_1.default.findById(userId);
-                    if (!user || user.coachId?.toString() !== data.otherUserId) {
-                        socket.emit('message-error', 'Not authorized to join this conversation');
-                        return;
-                    }
-                    conversationUserId = userId;
-                    conversationCoachId = data.otherUserId;
-                }
-                else if (userType === 'coach') {
-                    // Verify coach has this student
-                    const coach = await Coach_1.default.findById(userId);
-                    if (!coach || !coach.studentsId.some(id => id.toString() === data.otherUserId)) {
-                        socket.emit('message-error', 'Not authorized to join this conversation');
-                        return;
-                    }
-                    conversationUserId = data.otherUserId;
-                    conversationCoachId = userId;
-                }
-                else {
-                    socket.emit('message-error', 'Invalid user type');
+                const { roomId } = data;
+                if (!socket.userId) {
+                    socket.emit('error', { error: 'Not authenticated' });
                     return;
                 }
-                const conversation = (0, socketService_1.getOrCreateConversation)(conversationUserId, conversationCoachId);
-                (0, socketService_1.joinUserToRoom)(socket, conversation.id);
-                socket.emit('joined-conversation', { conversationId: conversation.id });
+                // Verify room access
+                const hasAccess = await (0, socketService_1.verifyRoomAccess)(socket, roomId);
+                if (!hasAccess) {
+                    socket.emit('error', { error: 'Access denied to this room' });
+                    return;
+                }
+                (0, socketService_1.joinRoom)(socket, roomId);
+                socket.emit('room_joined', { roomId });
+                // Notify others in room
+                (0, socketService_1.broadcastToRoom)(io, roomId, 'connection_status', {
+                    status: 'user_joined',
+                    message: `${socket.userName} joined the room`,
+                }, socket.id);
             }
             catch (error) {
-                socket.emit('message-error', error.message || 'Failed to join conversation');
+                socket.emit('error', { error: error.message });
             }
         });
         /**
-         * Leave conversation
+         * Leave a chat room
          */
-        socket.on('leave-conversation', (data) => {
-            (0, socketService_1.leaveUserFromRoom)(socket, data.conversationId);
-            socket.emit('left-conversation', { conversationId: data.conversationId });
-        });
-        /**
-         * Send message (User-Coach chat)
-         */
-        socket.on('send-message', async (messageData) => {
-            await (0, socketService_1.handleChatMessage)(io, socket, messageData);
-        });
-        /**
-         * Join AI chat
-         */
-        socket.on('join-ai-chat', async (data) => {
+        socket.on('leave_room', (data) => {
             try {
-                if (userType !== 'user' || userId !== data.userId) {
-                    socket.emit('message-error', 'Unauthorized');
-                    return;
-                }
-                const aiRoomId = `ai_chat_${data.userId}`;
-                (0, socketService_1.joinUserToRoom)(socket, aiRoomId);
-                socket.emit('joined-ai-chat', { userId: data.userId });
+                const { roomId } = data;
+                (0, socketService_1.leaveRoom)(socket, roomId);
+                socket.emit('room_left', { roomId });
+                // Notify others in room
+                (0, socketService_1.broadcastToRoom)(io, roomId, 'connection_status', {
+                    status: 'user_left',
+                    message: `${socket.userName} left the room`,
+                }, socket.id);
             }
             catch (error) {
-                socket.emit('message-error', error.message || 'Failed to join AI chat');
+                socket.emit('error', { error: error.message });
             }
         });
         /**
-         * Leave AI chat
+         * Send message to room
          */
-        socket.on('leave-ai-chat', (data) => {
-            const aiRoomId = `ai_chat_${data.userId}`;
-            (0, socketService_1.leaveUserFromRoom)(socket, aiRoomId);
-            socket.emit('left-ai-chat', { userId: data.userId });
-        });
-        /**
-         * Send AI message
-         */
-        socket.on('send-ai-message', async (data) => {
-            await (0, socketService_1.handleAIChatMessage)(io, socket, data);
-        });
-        /**
-         * Start live video stream
-         */
-        socket.on('start-live-stream', async (data) => {
+        socket.on('send_message', async (data) => {
             try {
-                if (userType !== 'user' || userId !== data.userId) {
-                    socket.emit('message-error', 'Unauthorized');
+                const { roomId, message, type = 'text' } = data;
+                if (!socket.userId) {
+                    socket.emit('message_error', { error: 'Not authenticated' });
                     return;
                 }
-                const streamRoomId = `live_stream_${data.userId}`;
-                (0, socketService_1.joinUserToRoom)(socket, streamRoomId);
-                (0, socketService_1.sendToUser)(io, data.userId, 'stream-status', {
-                    userId: data.userId,
-                    status: 'active',
+                // Verify room access
+                const hasAccess = await (0, socketService_1.verifyRoomAccess)(socket, roomId);
+                if (!hasAccess) {
+                    socket.emit('message_error', { error: 'Access denied to this room' });
+                    return;
+                }
+                // Create message object
+                const socketMessage = {
+                    id: `${Date.now()}-${socket.id}`,
+                    from: socket.userId,
+                    to: roomId,
+                    message,
+                    timestamp: new Date(),
+                    type,
+                };
+                // Broadcast to room
+                (0, socketService_1.broadcastToRoom)(io, roomId, 'new_message', socketMessage, socket.id);
+                // Also send confirmation to sender
+                socket.emit('new_message', socketMessage);
+            }
+            catch (error) {
+                socket.emit('message_error', { error: error.message });
+            }
+        });
+        /**
+         * Start video stream
+         */
+        socket.on('start_stream', async (data) => {
+            try {
+                const { roomId } = data;
+                if (!socket.userId) {
+                    socket.emit('error', { error: 'Not authenticated' });
+                    return;
+                }
+                // Verify room access
+                const hasAccess = await (0, socketService_1.verifyRoomAccess)(socket, roomId);
+                if (!hasAccess) {
+                    socket.emit('error', { error: 'Access denied to this room' });
+                    return;
+                }
+                const streamId = `stream-${socket.userId}-${Date.now()}`;
+                // Broadcast stream started
+                (0, socketService_1.broadcastToRoom)(io, roomId, 'stream_started', {
+                    roomId,
+                    streamId,
                 });
-                socket.emit('live-stream-started', { userId: data.userId });
+                socket.emit('stream_started', { roomId, streamId });
             }
             catch (error) {
-                socket.emit('message-error', error.message || 'Failed to start live stream');
+                socket.emit('error', { error: error.message });
             }
         });
         /**
-         * Stop live video stream
+         * Stop video stream
          */
-        socket.on('stop-live-stream', (data) => {
-            const streamRoomId = `live_stream_${data.userId}`;
-            (0, socketService_1.leaveUserFromRoom)(socket, streamRoomId);
-            // Clear video analysis history when stream stops
-            (0, conversationStore_1.clearVideoAnalysisHistory)(data.userId);
-            (0, socketService_1.sendToUser)(io, data.userId, 'stream-status', {
-                userId: data.userId,
-                status: 'inactive',
-            });
-            socket.emit('live-stream-stopped', { userId: data.userId });
-        });
-        /**
-         * Send video frame
-         */
-        socket.on('video-frame', async (data) => {
-            await (0, socketService_1.handleVideoFrame)(io, socket, data);
-        });
-        /**
-         * Upload video
-         */
-        socket.on('upload-video', async (data) => {
+        socket.on('stop_stream', async (data) => {
             try {
-                if (userType !== 'user' || userId !== data.userId) {
-                    socket.emit('message-error', 'Unauthorized');
+                const { roomId } = data;
+                if (!socket.userId) {
+                    socket.emit('error', { error: 'Not authenticated' });
                     return;
                 }
-                const videoId = `video_${Date.now()}_${userId}`;
-                // If exercise and description are provided, analyze the video
-                if (data.exercise && data.videoDescription) {
-                    try {
-                        const analysis = await (0, xaiService_1.analyzeVideoForm)(data.userId, data.videoDescription, data.exercise);
-                        // Send analysis result
-                        socket.emit('video-analysis', {
-                            userId: data.userId,
-                            videoId: videoId,
-                            analysis: analysis,
-                            exercise: data.exercise,
+                // Reset user state when stream stops
+                if (socket.userId) {
+                    (0, stateTrackingService_1.resetUserState)(socket.userId);
+                }
+                // Broadcast stream stopped
+                (0, socketService_1.broadcastToRoom)(io, roomId, 'stream_stopped', { roomId });
+                socket.emit('stream_stopped', { roomId });
+            }
+            catch (error) {
+                socket.emit('error', { error: error.message });
+            }
+        });
+        /**
+         * Send stream data (for video analysis)
+         */
+        socket.on('stream_data', async (data) => {
+            try {
+                const { roomId, streamData } = data;
+                if (!socket.userId) {
+                    socket.emit('error', { error: 'Not authenticated' });
+                    return;
+                }
+                // Verify room access
+                const hasAccess = await (0, socketService_1.verifyRoomAccess)(socket, roomId);
+                if (!hasAccess) {
+                    socket.emit('error', { error: 'Access denied to this room' });
+                    return;
+                }
+                // Broadcast stream data (this will be processed by AI service later)
+                (0, socketService_1.broadcastToRoom)(io, roomId, 'stream_data_received', {
+                    streamId: `stream-${socket.userId}`,
+                    data: streamData,
+                });
+            }
+            catch (error) {
+                socket.emit('error', { error: error.message });
+            }
+        });
+        /**
+         * AI Chat message (processed by AI service)
+         */
+        socket.on('ai_chat_message', async (data) => {
+            try {
+                if (!socket.userId || socket.userType !== 'user') {
+                    socket.emit('error', { error: 'Only users can send AI chat messages' });
+                    return;
+                }
+                if (!data.message || typeof data.message !== 'string' || data.message.trim().length === 0) {
+                    socket.emit('error', { error: 'Message cannot be empty' });
+                    return;
+                }
+                // Get or create AI room
+                const roomId = data.roomId || aiService_1.default.getAIRoomId(socket.userId);
+                // Create room with user and ai-coach as participants
+                const room = (0, socketService_1.getOrCreateRoom)(socket.userId, 'ai-coach', 'user-ai');
+                // Ensure user is in the room
+                if (!socket.rooms.has(room.id)) {
+                    (0, socketService_1.joinRoom)(socket, room.id);
+                }
+                // Use the generated room ID (might differ from requested)
+                const actualRoomId = room.id;
+                // Get user's coach if they have one
+                const user = await User_1.default.findById(socket.userId);
+                const coachId = user?.coachId?.toString();
+                // Get user context
+                const context = await aiService_1.default.getUserContext(socket.userId, coachId);
+                // Create AI message ID for streaming
+                const aiMessageId = `ai-${Date.now()}-${socket.id}`;
+                const startTime = new Date();
+                // Emit streaming start
+                socket.emit('ai_response_start', {
+                    messageId: aiMessageId,
+                    timestamp: startTime,
+                });
+                // Stream AI response
+                let fullMessage = '';
+                try {
+                    for await (const chunk of aiService_1.default.streamChatMessage({
+                        message: data.message,
+                        context,
+                        userId: socket.userId,
+                        roomId: actualRoomId,
+                    })) {
+                        fullMessage += chunk;
+                        // Send each chunk as it arrives
+                        socket.emit('ai_response_chunk', {
+                            messageId: aiMessageId,
+                            chunk: chunk,
+                            message: fullMessage,
                         });
                     }
-                    catch (error) {
-                        console.error('Error analyzing video:', error);
-                        // Still acknowledge video upload even if analysis fails
-                    }
+                    // Create complete message object
+                    const aiMessage = {
+                        id: aiMessageId,
+                        from: 'ai-coach',
+                        to: socket.userId,
+                        message: fullMessage,
+                        timestamp: startTime,
+                        type: 'text',
+                    };
+                    // Emit streaming complete
+                    socket.emit('ai_response_complete', {
+                        messageId: aiMessageId,
+                        message: fullMessage,
+                        timestamp: new Date(),
+                    });
+                    // Don't emit new_message here - the streaming chunks already updated the UI
+                    // The complete event is enough to finalize the message
                 }
-                socket.emit('video-uploaded', {
-                    userId: data.userId,
-                    videoId: videoId,
-                });
+                catch (streamError) {
+                    console.error('AI stream error:', streamError);
+                    socket.emit('ai_response_error', {
+                        messageId: aiMessageId,
+                        error: streamError.message || 'Failed to stream AI response',
+                    });
+                }
             }
             catch (error) {
-                socket.emit('message-error', error.message || 'Failed to upload video');
+                console.error('AI chat error:', error);
+                socket.emit('error', { error: error.message || 'Failed to process AI message' });
             }
         });
         /**
-         * Disconnect handler
+         * AI Video analysis (processed by AI service)
          */
-        socket.on('disconnect', () => {
-            console.log(`❌ ${userType} disconnected: ${userId} (socket: ${socket.id})`);
-            (0, socketService_1.unregisterUserSocket)(userId, socket.id);
+        socket.on('ai_video_analysis', async (data) => {
+            try {
+                if (!socket.userId || socket.userType !== 'user') {
+                    socket.emit('error', { error: 'Only users can request video analysis' });
+                    return;
+                }
+                if (!data.videoData) {
+                    socket.emit('error', { error: 'Video data is required' });
+                    return;
+                }
+                if (!data.analysisType || !['form', 'progress', 'technique', 'general'].includes(data.analysisType)) {
+                    socket.emit('error', { error: 'Invalid analysis type' });
+                    return;
+                }
+                // Get or create AI room
+                const roomId = data.roomId || aiService_1.default.getAIRoomId(socket.userId);
+                const room = (0, socketService_1.getOrCreateRoom)(socket.userId, 'ai-coach', 'user-ai');
+                // Ensure user is in the room
+                if (!socket.rooms.has(room.id)) {
+                    (0, socketService_1.joinRoom)(socket, room.id);
+                }
+                // Get user's coach if they have one
+                const user = await User_1.default.findById(socket.userId);
+                const coachId = user?.coachId?.toString();
+                // Get user context
+                const context = await aiService_1.default.getUserContext(socket.userId, coachId);
+                // Send processing status
+                socket.emit('ai_analysis_complete', {
+                    analysis: { status: 'processing', message: 'Analyzing video...' },
+                    type: data.analysisType,
+                });
+                // Always analyze video (analysis will be marked as suppressed if feedback shouldn't be shown)
+                const analysis = await aiService_1.default.analyzeVideo({
+                    videoData: data.videoData,
+                    analysisType: data.analysisType,
+                    userId: socket.userId,
+                    exerciseType: data.exerciseType,
+                    context,
+                });
+                // Always save analysis to database for progress tracking, even if feedback is suppressed
+                if (analysis) {
+                    // Get user's coach ID
+                    const user = await User_1.default.findById(socket.userId);
+                    const coachId = user?.coachId || null;
+                    // Save video analysis to database (always save for progress tracking)
+                    try {
+                        const videoAnalysis = new VideoAnalysis_1.default({
+                            userId: socket.userId,
+                            coachId: coachId,
+                            type: 'live',
+                            summary: analysis.analysis.formFeedback || 'Form analysis complete',
+                            feedback: analysis.suppressed ? null : (analysis.analysis.formFeedback || null), // Don't store feedback if suppressed
+                            poseData: data.videoData?.landmarks || null,
+                            metrics: {
+                                score: analysis.analysis.score || 75,
+                                exerciseType: data.exerciseType || 'general',
+                                analysisType: analysis.type,
+                                suppressed: analysis.suppressed || false, // Track if this was suppressed
+                            },
+                            sportMetrics: analysis.analysis.sportMetrics || null, // Store sport-specific structured metrics
+                            timestampedFeedback: analysis.analysis.timestampedFeedback || [], // Store time-stamped feedback
+                            duration: data.videoData?.duration || 0,
+                            coachVisible: true, // Live footage always visible to coach
+                            studentPermission: true,
+                            sessionId: data.videoData?.sessionId || `session-${socket.userId}-${Date.now()}`,
+                        });
+                        await videoAnalysis.save();
+                    }
+                    catch (saveError) {
+                        console.error('Failed to save video analysis:', saveError);
+                        // Don't fail the request if saving fails
+                    }
+                    // Only send feedback to user if not suppressed
+                    if (!analysis.suppressed) {
+                        // Send analysis results
+                        socket.emit('ai_analysis_complete', {
+                            analysis: analysis.analysis,
+                            type: analysis.type,
+                        });
+                        // Also create a message with the analysis for the chat
+                        const analysisMessage = {
+                            id: `${Date.now()}-analysis-${socket.id}`,
+                            from: 'ai-coach',
+                            to: socket.userId,
+                            message: analysis.analysis.formFeedback || 'Form analysis complete',
+                            timestamp: analysis.timestamp,
+                            type: 'video',
+                        };
+                        socket.emit('new_message', analysisMessage);
+                    }
+                    else {
+                        // Feedback was suppressed - save silently for progress tracking but don't show to user
+                        // The analysis is still saved to the database for dashboard tracking
+                    }
+                }
+            }
+            catch (error) {
+                console.error('AI video analysis error:', error);
+                socket.emit('error', { error: error.message || 'Failed to analyze video' });
+                socket.emit('ai_analysis_complete', {
+                    analysis: { status: 'error', error: error.message },
+                    type: data.analysisType || 'general',
+                });
+            }
         });
         /**
-         * Error handler
+         * Coach message to student
+         */
+        socket.on('coach_message', async (data) => {
+            try {
+                if (!socket.userId || socket.userType !== 'coach') {
+                    socket.emit('error', { error: 'Only coaches can send coach messages' });
+                    return;
+                }
+                const { studentId, message } = data;
+                // Verify coach has this student
+                const coach = await Coach_1.default.findById(socket.userId);
+                if (!coach || !coach.studentsId.some(id => id.toString() === studentId)) {
+                    socket.emit('error', { error: 'Student not found in your student list' });
+                    return;
+                }
+                // Create room for user-coach chat
+                const room = (0, socketService_1.getOrCreateRoom)(studentId, socket.userId, 'user-coach');
+                // Create message
+                const socketMessage = {
+                    id: `${Date.now()}-${socket.id}`,
+                    from: socket.userId,
+                    to: studentId,
+                    message,
+                    timestamp: new Date(),
+                    type: 'text',
+                };
+                // Send to student if they're connected
+                io.to(room.id).emit('coach_message_received', socketMessage);
+                socket.emit('coach_message_received', socketMessage);
+            }
+            catch (error) {
+                socket.emit('error', { error: error.message });
+            }
+        });
+        /**
+         * Handle disconnect
+         */
+        socket.on('disconnect', () => {
+            console.log(`❌ Client disconnected: ${socket.id} (User: ${socket.userName})`);
+            (0, socketService_1.cleanupSocket)(socket);
+        });
+        /**
+         * Handle errors
          */
         socket.on('error', (error) => {
-            console.error(`Socket error for ${userId}:`, error);
-            socket.emit('socket-error', error.message);
+            console.error(`Socket error for ${socket.id}:`, error);
+            socket.emit('error', { error: error.message || 'An error occurred' });
         });
     });
 };

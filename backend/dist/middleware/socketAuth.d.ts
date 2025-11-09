@@ -3,9 +3,9 @@ import { AuthenticatedSocket } from '../types/socket.types';
 /**
  * Authenticate socket connection using JWT token
  */
-export declare const authenticateSocket: (socket: AuthenticatedSocket, token: string) => Promise<boolean>;
+export declare const authenticateSocket: (socket: AuthenticatedSocket, next: (err?: Error) => void) => Promise<void>;
 /**
- * Socket authentication middleware
+ * Setup socket authentication middleware
  */
-export declare const socketAuthMiddleware: (io: Server) => void;
+export declare const setupSocketAuth: (io: Server) => void;
 //# sourceMappingURL=socketAuth.d.ts.map

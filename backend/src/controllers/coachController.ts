@@ -1,6 +1,8 @@
 import { Request, Response } from 'express';
 import User from '../models/User';
 import Coach from '../models/Coach';
+import CoachRequest from '../models/CoachRequest';
+import VideoAnalysis from '../models/VideoAnalysis';
 import { AuthRequest } from '../middleware/auth';
 import { hashPassword } from '../utils/password';
 import mongoose from 'mongoose';
@@ -97,14 +99,116 @@ export const getStudent = async (req: Request, res: Response): Promise<void> => 
       return;
     }
 
-    res.json({ student });
+    // Get performance data (mock data for now - in production, this would come from a Performance model)
+    const performanceData = generateMockPerformanceData();
+    const goals = generateMockGoals();
+
+    res.json({ 
+      student,
+      performanceData,
+      goals,
+    });
   } catch (error: any) {
     res.status(500).json({ error: 'Internal server error' });
   }
 };
 
 /**
- * Add a student to coach's list (student must request first, but for simplicity we'll allow direct addition)
+ * Generate mock performance data for a student
+ */
+const generateMockPerformanceData = () => {
+  const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  return days.map((day, index) => ({
+    date: day,
+    score: 75 + Math.floor(Math.random() * 20), // 75-95
+    formScore: 70 + Math.floor(Math.random() * 25), // 70-95
+    goalProgress: 60 + Math.floor(Math.random() * 25), // 60-85
+  }));
+};
+
+/**
+ * Generate mock goals for a student
+ */
+const generateMockGoals = () => {
+  return [
+    { id: '1', title: 'Squat Form Improvement', target: 100, current: 75, unit: '%' },
+    { id: '2', title: 'Weight Loss', target: 20, current: 12, unit: 'lbs' },
+    { id: '3', title: 'Strength Increase', target: 50, current: 35, unit: 'lbs' },
+    { id: '4', title: 'Endurance', target: 30, current: 22, unit: 'min' },
+  ];
+};
+
+/**
+ * Request to add a student by username
+ */
+export const requestStudentByUsername = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const authReq = req as AuthRequest;
+    const coachId = authReq.user?.id;
+    const { username, message } = req.body;
+
+    if (!coachId) {
+      res.status(401).json({ error: 'Not authenticated' });
+      return;
+    }
+
+    if (!username) {
+      res.status(400).json({ error: 'Username is required' });
+      return;
+    }
+
+    const coach = await Coach.findById(coachId);
+    if (!coach) {
+      res.status(404).json({ error: 'Coach not found' });
+      return;
+    }
+
+    // Find student by username
+    const student = await User.findOne({ userName: username });
+    if (!student) {
+      res.status(404).json({ error: 'Student not found' });
+      return;
+    }
+
+    // Check if student is already in the list
+    if (coach.studentsId.some(id => id.toString() === student._id.toString())) {
+      res.status(400).json({ error: 'Student already in your list' });
+      return;
+    }
+
+    // Check if there's already a pending request
+    const existingRequest = await CoachRequest.findOne({
+      coachId,
+      studentId: student._id,
+      status: 'pending',
+    });
+
+    if (existingRequest) {
+      res.status(400).json({ error: 'Request already pending' });
+      return;
+    }
+
+    // Create request
+    const request = new CoachRequest({
+      coachId,
+      studentId: student._id,
+      status: 'pending',
+      message: message || '',
+    });
+    await request.save();
+
+    res.json({ message: 'Request sent successfully', request });
+  } catch (error: any) {
+    if (error.code === 11000) {
+      res.status(400).json({ error: 'Request already exists' });
+      return;
+    }
+    res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
+/**
+ * Add a student to coach's list (after request is accepted)
  */
 export const addStudent = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -147,6 +251,12 @@ export const addStudent = async (req: Request, res: Response): Promise<void> => 
     // Update student's coachId
     student.coachId = coachId as any;
     await student.save();
+
+    // Update request status if exists
+    await CoachRequest.updateMany(
+      { coachId, studentId, status: 'pending' },
+      { status: 'accepted' }
+    );
 
     res.json({ message: 'Student added successfully' });
   } catch (error: any) {
@@ -446,6 +556,117 @@ export const getStudentAIParameters = async (req: Request, res: Response): Promi
     const parameters = coach.aiParameters?.[studentId] || '';
 
     res.json({ parameters });
+  } catch (error: any) {
+    res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
+/**
+ * Get video analyses for a specific student (live footage summaries)
+ */
+export const getStudentVideoAnalyses = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const authReq = req as AuthRequest;
+    const coachId = authReq.user?.id;
+    const { studentId } = req.params;
+    const { type, limit = 50 } = req.query;
+
+    if (!coachId) {
+      res.status(401).json({ error: 'Not authenticated' });
+      return;
+    }
+
+    if (!mongoose.Types.ObjectId.isValid(studentId)) {
+      res.status(400).json({ error: 'Invalid student ID' });
+      return;
+    }
+
+    const coach = await Coach.findById(coachId);
+    if (!coach) {
+      res.status(404).json({ error: 'Coach not found' });
+      return;
+    }
+
+    // Verify student belongs to this coach
+    if (!coach.studentsId.some(id => id.toString() === studentId)) {
+      res.status(403).json({ error: 'Student not found in your student list' });
+      return;
+    }
+
+    // Build query
+    const query: any = {
+      userId: studentId,
+      coachId: coachId,
+      coachVisible: true,
+    };
+
+    if (type === 'live' || type === 'uploaded') {
+      query.type = type;
+    }
+
+    // For uploaded videos, check student permission
+    if (type === 'uploaded') {
+      query.studentPermission = true;
+    }
+
+    // Get video analyses
+    const analyses = await VideoAnalysis.find(query)
+      .sort({ createdAt: -1 })
+      .limit(Number(limit))
+      .lean();
+
+    res.json({ analyses });
+  } catch (error: any) {
+    res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
+/**
+ * Get uploaded videos for a specific student (with permission)
+ */
+export const getStudentVideos = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const authReq = req as AuthRequest;
+    const coachId = authReq.user?.id;
+    const { studentId } = req.params;
+    const { limit = 50 } = req.query;
+
+    if (!coachId) {
+      res.status(401).json({ error: 'Not authenticated' });
+      return;
+    }
+
+    if (!mongoose.Types.ObjectId.isValid(studentId)) {
+      res.status(400).json({ error: 'Invalid student ID' });
+      return;
+    }
+
+    const coach = await Coach.findById(coachId);
+    if (!coach) {
+      res.status(404).json({ error: 'Coach not found' });
+      return;
+    }
+
+    // Verify student belongs to this coach
+    if (!coach.studentsId.some(id => id.toString() === studentId)) {
+      res.status(403).json({ error: 'Student not found in your student list' });
+      return;
+    }
+
+    // Get uploaded videos that student has given permission to view
+    const videos = await VideoAnalysis.find({
+      userId: studentId,
+      coachId: coachId,
+      type: 'uploaded',
+      videoUrl: { $ne: null },
+      studentPermission: true,
+      coachVisible: true,
+    })
+      .sort({ createdAt: -1 })
+      .limit(Number(limit))
+      .lean();
+
+    res.json({ videos });
   } catch (error: any) {
     res.status(500).json({ error: 'Internal server error' });
   }
