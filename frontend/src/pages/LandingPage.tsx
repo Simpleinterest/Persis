@@ -31,7 +31,7 @@ const LandingPage: React.FC = () => {
 
   const handleGetStarted = () => {
     if (isAuthenticated) {
-      navigate('/ai-coach');
+      navigate('/dashboard');
     } else {
       navigate('/register');
     }
@@ -55,13 +55,7 @@ const LandingPage: React.FC = () => {
               </p>
               <div className="hero-actions">
                 <button onClick={handleGetStarted} className="hero-cta-primary">
-                  Start Free Trial
-                </button>
-                <button className="hero-cta-secondary">
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M8 5v14l11-7z" fill="currentColor"/>
-                  </svg>
-                  Watch Demo
+                  Get Started
                 </button>
               </div>
             </div>
@@ -69,7 +63,6 @@ const LandingPage: React.FC = () => {
               <div className="hero-image-placeholder">
                 {/* Placeholder for hero image */}
               </div>
-              <button className="preview-button">Preview</button>
             </div>
           </div>
         </section>
@@ -193,7 +186,7 @@ const LandingPage: React.FC = () => {
                 Join thousands of users who are already achieving their fitness goals with Persis.
               </p>
               <button onClick={handleGetStarted} className="cta-button">
-                Start Free Trial
+                Get Started
               </button>
             </div>
           </div>

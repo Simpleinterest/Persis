@@ -24,7 +24,7 @@ const Sidebar: React.FC = () => {
       <div className="sidebar-container">
         <div className="sidebar-header">
           <Link to="/" className="sidebar-logo">
-            <img src="/logo.svg" alt="Persis Logo" className="logo-image" />
+            <img src="/logo.png" alt="Persis Logo" className="logo-image" />
             <span className="logo-text">Persis</span>
           </Link>
         </div>

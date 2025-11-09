@@ -9,7 +9,7 @@ const Footer: React.FC = () => {
         <div className="footer-content">
           <div className="footer-section">
             <Link to="/" className="footer-logo">
-              <img src="/logo.svg" alt="Persis Logo" className="footer-logo-image" />
+              <img src="/logo.png" alt="Persis Logo" className="footer-logo-image" />
               <span className="footer-logo-text">Persis</span>
             </Link>
             <p className="footer-description">

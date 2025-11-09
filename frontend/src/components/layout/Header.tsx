@@ -10,7 +10,7 @@ const Header: React.FC = () => {
 
   const handleGetStarted = () => {
     if (isAuthenticated) {
-      navigate('/ai-coach');
+      navigate('/dashboard');
     } else {
       navigate('/register');
     }
@@ -53,7 +53,7 @@ const Header: React.FC = () => {
     <header className="public-header">
       <div className="header-container">
         <Link to="/" className="header-logo">
-          <img src="/logo.svg" alt="Persis Logo" className="logo-image" />
+          <img src="/logo.png" alt="Persis Logo" className="logo-image" />
           <span className="logo-text">Persis</span>
         </Link>
         <nav className="header-nav-center">
