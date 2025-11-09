@@ -1,13 +1,10 @@
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
-
-// --- Imports from both branches, combined ---
+import CVAnalyzer from './components/CVAnalyzer';
 import AICoachChat from './pages/user/AICoachChat';
 import LoginPage from './pages/auth/LoginPage';
 import RegisterPage from './pages/auth/RegisterPage';
 import ProtectedRoute from './components/common/ProtectedRoute';
-import LandingPage from './pages/LandingPage';
-
 import './App.css';
 
 function App() {
@@ -31,11 +28,8 @@ function App() {
             } 
           />
           
-          {/* --- This is your branch's 'LandingPage' --- */}
-          {/* I've added it to the path "/landing" so it doesn't 
-              conflict with the root redirect above. */}
-          <Route path="/landing" element={<LandingPage />} />
-
+          {/* CV Analyzer route */}
+          <Route path="/cv-analyzer" element={<CVAnalyzer />} />
         </Routes>
       </div>
     </Router>
