@@ -92,7 +92,7 @@ const CoachSchema = new mongoose_1.Schema({
     timestamps: true, // This adds createdAt and updatedAt fields
 });
 // Index for faster queries
-// Note: userName already has an index from unique: true
+CoachSchema.index({ userName: 1 });
 CoachSchema.index({ studentsId: 1 });
 const Coach = mongoose_1.default.model('Coach', CoachSchema);
 exports.default = Coach;

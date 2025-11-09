@@ -30,7 +30,7 @@ export interface XAIChatResponse {
 
 export interface AIChatContext {
   userId: string;
-  userName: string;
+  userName?: string;
   userProfile?: {
     age?: number;
     weight?: number;
@@ -41,6 +41,7 @@ export interface AIChatContext {
   };
   coachParameters?: string;
   conversationHistory?: XAIChatMessage[];
+  stateContext?: string; // Current exercise state for video analysis
 }
 
 export interface AIChatRequest {
@@ -57,7 +58,7 @@ export interface AIChatResponse {
 }
 
 export interface VideoAnalysisRequest {
-  videoData: string | Buffer; // Base64 encoded video or video buffer
+  videoData: string | Buffer | any; // Base64 encoded video, video buffer, or object with landmarks/poseDescription
   analysisType: 'form' | 'progress' | 'technique' | 'general';
   userId: string;
   exerciseType?: string;

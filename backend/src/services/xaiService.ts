@@ -95,11 +95,30 @@ class XAIService {
     }
   }
 
-  async analyzeVideo(description: string, context: string): Promise<string> {
+  async analyzeVideo(description: string, context: string, aiContext?: any): Promise<string> {
     try {
-      const systemPrompt = `You are Persis, a friendly fitness coach. Provide concise, conversational feedback on workout form and technique. Keep responses to 3-5 sentences maximum. Be direct, encouraging, and actionable.`;
+      // Build system prompt with stateful behavior guidelines
+      let systemPrompt = `You are Persis, a professional AI fitness coach specializing in real-time form analysis. Your feedback is technical, specific, and actionable.`;
 
-      const userPrompt = `Video Description: ${description}\n\nContext: ${context}\n\nProvide a concise analysis of the workout form, technique, and recommendations for improvement. Keep it brief and conversational.`;
+      // Use the system prompt from AI context if available (it includes state tracking info)
+      if (aiContext && aiContext.systemPrompt) {
+        systemPrompt = aiContext.systemPrompt;
+      } else {
+        systemPrompt += `\n\nCRITICAL VIDEO ANALYSIS GUIDELINES:
+- Provide SPECIFIC, TECHNICAL feedback based on pose landmarks and body position
+- Focus on FORM CORRECTIONS: alignment, posture, joint angles, movement patterns
+- Be ACTIONABLE: Tell the user exactly what to change and how
+- AVOID generic encouragement like "Good job!" or "Keep it up!"
+- Instead of "Good form!", say "Your back is straight and knees are aligned with toes - excellent"
+- Instead of "Try harder!", say "Your left shoulder is dropping 3 inches. Engage your core and pull it level with your right shoulder"
+- Only provide feedback when there's a SIGNIFICANT observation or correction needed
+- Keep feedback to 1-2 sentences maximum (20-50 words)
+- Use anatomical terms: "knees", "hips", "spine", "shoulders", "elbows"
+- Focus on safety: point out potential injury risks immediately
+- Be precise: "Your knee is caving inward 5 degrees" is better than "Watch your knee alignment"`;
+      }
+
+      const userPrompt = `Video Description: ${description}\n\nContext: ${context}\n\nAnalyze the workout form and provide SPECIFIC, TECHNICAL feedback. Focus on actionable corrections based on what you observe in the pose data. Only provide feedback if there's a significant form issue, state change, or safety concern.`;
 
       const messages: XAIChatMessage[] = [
         { role: 'system', content: systemPrompt },
@@ -109,8 +128,8 @@ class XAIService {
       const response = await this.chatCompletion({
         messages,
         model: 'grok-3',
-        temperature: 0.7,
-        max_tokens: 300, // Reduced for more concise video analysis
+        temperature: 0.6, // Lower temperature for more consistent, technical responses
+        max_tokens: 100, // Very short for live feedback
       });
 
       return response.choices[0]?.message?.content || 'Unable to analyze video at this time.';

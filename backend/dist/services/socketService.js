@@ -1,232 +1,192 @@
 "use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.handleVideoFrame = exports.handleAIChatMessage = exports.handleChatMessage = exports.sendToUser = exports.broadcastToConversation = exports.getUserSocketIds = exports.unregisterUserSocket = exports.registerUserSocket = exports.leaveUserFromRoom = exports.joinUserToRoom = exports.getOrCreateConversation = exports.generateConversationId = void 0;
-const xaiService_1 = require("./xaiService");
-const conversationStore_1 = require("./conversationStore");
-// Store active conversations
-const activeConversations = new Map();
-// Store user socket connections
-const userSockets = new Map(); // userId -> socketIds[]
+exports.verifyRoomAccess = exports.cleanupSocket = exports.disconnectOtherUserSockets = exports.getUserSockets = exports.unregisterUserSocket = exports.registerUserSocket = exports.getUserRooms = exports.broadcastToRoom = exports.leaveRoom = exports.joinRoom = exports.getOrCreateRoom = exports.generateRoomId = void 0;
+const Coach_1 = __importDefault(require("../models/Coach"));
+// In-memory storage for rooms (in production, use Redis or database)
+const rooms = new Map();
+const userRooms = new Map(); // userId -> Set of roomIds
+const roomSockets = new Map(); // roomId -> Set of socketIds
+const userSockets = new Map(); // userId -> Set of socketIds (track all sockets for a user)
 /**
- * Generate conversation ID
+ * Generate room ID for user-coach or user-ai chat
  */
-const generateConversationId = (userId, coachId) => {
-    const ids = [userId, coachId].sort();
-    return `conv_${ids[0]}_${ids[1]}`;
+const generateRoomId = (userId, otherId, type) => {
+    const sortedIds = [userId, otherId].sort();
+    return `${type}:${sortedIds.join(':')}`;
 };
-exports.generateConversationId = generateConversationId;
+exports.generateRoomId = generateRoomId;
 /**
- * Get or create conversation room
+ * Create or get chat room
  */
-const getOrCreateConversation = (userId, coachId) => {
-    const conversationId = (0, exports.generateConversationId)(userId, coachId);
-    if (!activeConversations.has(conversationId)) {
-        const room = {
-            id: conversationId,
-            type: 'user-coach',
-            participants: [userId, coachId],
-            createdAt: new Date(),
-        };
-        activeConversations.set(conversationId, room);
+const getOrCreateRoom = (userId, otherId, type) => {
+    const roomId = (0, exports.generateRoomId)(userId, otherId, type);
+    if (rooms.has(roomId)) {
+        return rooms.get(roomId);
     }
-    return activeConversations.get(conversationId);
+    const room = {
+        id: roomId,
+        participants: [userId, otherId],
+        type,
+        createdAt: new Date(),
+    };
+    rooms.set(roomId, room);
+    return room;
 };
-exports.getOrCreateConversation = getOrCreateConversation;
+exports.getOrCreateRoom = getOrCreateRoom;
 /**
- * Join user to socket room
+ * Join a room
  */
-const joinUserToRoom = (socket, roomId) => {
+const joinRoom = (socket, roomId) => {
     socket.join(roomId);
-    console.log(`User ${socket.userId} joined room ${roomId}`);
-};
-exports.joinUserToRoom = joinUserToRoom;
-/**
- * Leave user from socket room
- */
-const leaveUserFromRoom = (socket, roomId) => {
-    socket.leave(roomId);
-    console.log(`User ${socket.userId} left room ${roomId}`);
-};
-exports.leaveUserFromRoom = leaveUserFromRoom;
-/**
- * Register user socket
- */
-const registerUserSocket = (userId, socketId) => {
-    if (!userSockets.has(userId)) {
-        userSockets.set(userId, []);
+    // Track room membership
+    if (!roomSockets.has(roomId)) {
+        roomSockets.set(roomId, new Set());
     }
-    userSockets.get(userId).push(socketId);
+    roomSockets.get(roomId).add(socket.id);
+    // Track user's rooms
+    if (socket.userId) {
+        if (!userRooms.has(socket.userId)) {
+            userRooms.set(socket.userId, new Set());
+        }
+        userRooms.get(socket.userId).add(roomId);
+    }
+    console.log(`Socket ${socket.id} joined room ${roomId}`);
+};
+exports.joinRoom = joinRoom;
+/**
+ * Leave a room
+ */
+const leaveRoom = (socket, roomId) => {
+    socket.leave(roomId);
+    // Remove from room tracking
+    if (roomSockets.has(roomId)) {
+        roomSockets.get(roomId).delete(socket.id);
+        if (roomSockets.get(roomId).size === 0) {
+            roomSockets.delete(roomId);
+        }
+    }
+    // Remove from user's rooms
+    if (socket.userId && userRooms.has(socket.userId)) {
+        userRooms.get(socket.userId).delete(roomId);
+        if (userRooms.get(socket.userId).size === 0) {
+            userRooms.delete(socket.userId);
+        }
+    }
+    console.log(`Socket ${socket.id} left room ${roomId}`);
+};
+exports.leaveRoom = leaveRoom;
+/**
+ * Broadcast message to room
+ */
+const broadcastToRoom = (io, roomId, event, data, excludeSocketId) => {
+    if (excludeSocketId) {
+        io.to(roomId).except(excludeSocketId).emit(event, data);
+    }
+    else {
+        io.to(roomId).emit(event, data);
+    }
+};
+exports.broadcastToRoom = broadcastToRoom;
+/**
+ * Get user's rooms
+ */
+const getUserRooms = (userId) => {
+    const userRoomSet = userRooms.get(userId);
+    return userRoomSet ? Array.from(userRoomSet) : [];
+};
+exports.getUserRooms = getUserRooms;
+/**
+ * Register a socket for a user
+ */
+const registerUserSocket = (socket) => {
+    if (socket.userId) {
+        if (!userSockets.has(socket.userId)) {
+            userSockets.set(socket.userId, new Set());
+        }
+        userSockets.get(socket.userId).add(socket.id);
+        console.log(`Registered socket ${socket.id} for user ${socket.userId} (Total: ${userSockets.get(socket.userId).size})`);
+    }
 };
 exports.registerUserSocket = registerUserSocket;
 /**
- * Unregister user socket
+ * Unregister a socket for a user
  */
-const unregisterUserSocket = (userId, socketId) => {
-    const sockets = userSockets.get(userId);
-    if (sockets) {
-        const index = sockets.indexOf(socketId);
-        if (index > -1) {
-            sockets.splice(index, 1);
+const unregisterUserSocket = (socket) => {
+    if (socket.userId && userSockets.has(socket.userId)) {
+        userSockets.get(socket.userId).delete(socket.id);
+        if (userSockets.get(socket.userId).size === 0) {
+            userSockets.delete(socket.userId);
         }
-        if (sockets.length === 0) {
-            userSockets.delete(userId);
-        }
+        console.log(`Unregistered socket ${socket.id} for user ${socket.userId} (Remaining: ${userSockets.get(socket.userId)?.size || 0})`);
     }
 };
 exports.unregisterUserSocket = unregisterUserSocket;
 /**
- * Get user socket IDs
+ * Get all sockets for a user
  */
-const getUserSocketIds = (userId) => {
-    return userSockets.get(userId) || [];
+const getUserSockets = (userId) => {
+    return userSockets.get(userId) || new Set();
 };
-exports.getUserSocketIds = getUserSocketIds;
+exports.getUserSockets = getUserSockets;
 /**
- * Broadcast message to conversation room
+ * Disconnect all sockets for a user (except the current one)
  */
-const broadcastToConversation = (io, conversationId, event, data) => {
-    io.to(conversationId).emit(event, data);
-};
-exports.broadcastToConversation = broadcastToConversation;
-/**
- * Send message to specific user
- */
-const sendToUser = (io, userId, event, data) => {
-    const socketIds = (0, exports.getUserSocketIds)(userId);
-    socketIds.forEach(socketId => {
-        io.to(socketId).emit(event, data);
+const disconnectOtherUserSockets = (io, userId, keepSocketId) => {
+    const sockets = (0, exports.getUserSockets)(userId);
+    let disconnectedCount = 0;
+    sockets.forEach(socketId => {
+        if (socketId !== keepSocketId) {
+            const socket = io.sockets.sockets.get(socketId);
+            if (socket) {
+                socket.disconnect(true);
+                disconnectedCount++;
+            }
+        }
     });
-};
-exports.sendToUser = sendToUser;
-/**
- * Handle chat message
- */
-const handleChatMessage = async (io, socket, messageData) => {
-    try {
-        // Validate message data
-        if (!messageData.message || !messageData.conversationId) {
-            socket.emit('message-error', 'Invalid message data');
-            return;
-        }
-        // Create message object
-        const message = {
-            senderId: socket.userId,
-            senderType: socket.userType,
-            receiverId: messageData.receiverId,
-            receiverType: socket.userType === 'user' ? 'coach' : 'user',
-            message: messageData.message,
-            timestamp: new Date(),
-            conversationId: messageData.conversationId,
-            type: 'text',
-            id: `msg_${Date.now()}_${socket.userId}`,
-        };
-        // Broadcast to conversation room
-        (0, exports.broadcastToConversation)(io, messageData.conversationId, 'receive-message', message);
-        // Confirm message was sent
-        socket.emit('message-sent', { messageId: message.id });
-    }
-    catch (error) {
-        socket.emit('message-error', error.message || 'Failed to send message');
+    if (disconnectedCount > 0) {
+        console.log(`Disconnected ${disconnectedCount} duplicate socket(s) for user ${userId}, keeping ${keepSocketId}`);
     }
 };
-exports.handleChatMessage = handleChatMessage;
+exports.disconnectOtherUserSockets = disconnectOtherUserSockets;
 /**
- * Handle AI chat message
+ * Cleanup on disconnect
  */
-const handleAIChatMessage = async (io, socket, messageData) => {
-    try {
-        if (socket.userType !== 'user' || socket.userId !== messageData.userId) {
-            socket.emit('message-error', 'Unauthorized');
-            return;
-        }
-        const aiRoomId = `ai_chat_${messageData.userId}`;
-        // Get conversation history
-        const conversationHistory = (0, conversationStore_1.getConversationHistory)(messageData.userId);
-        // Add user message to history
-        (0, conversationStore_1.addToConversationHistory)(messageData.userId, {
-            role: 'user',
-            content: messageData.message,
+const cleanupSocket = (socket) => {
+    if (socket.userId && userRooms.has(socket.userId)) {
+        const roomIds = Array.from(userRooms.get(socket.userId));
+        roomIds.forEach(roomId => {
+            (0, exports.leaveRoom)(socket, roomId);
         });
-        try {
-            // Get AI response from XAI
-            console.log(`🤖 Getting AI response for user ${messageData.userId}`);
-            const aiResponseText = await (0, xaiService_1.getAIChatResponse)(messageData.userId, messageData.message, conversationHistory);
-            // Add AI response to history
-            (0, conversationStore_1.addToConversationHistory)(messageData.userId, {
-                role: 'assistant',
-                content: aiResponseText,
-            });
-            // Send AI response to user
-            (0, exports.sendToUser)(io, messageData.userId, 'receive-ai-message', {
-                userId: messageData.userId,
-                message: aiResponseText,
-                from: 'ai',
-            });
-            console.log(`✅ AI response sent to user ${messageData.userId}`);
-        }
-        catch (error) {
-            console.error('❌ XAI API Error in handleAIChatMessage:', error);
-            const errorMessage = error.message || 'Failed to get AI response. Please try again.';
-            // Send detailed error to user
-            socket.emit('message-error', errorMessage);
-            // Also send a user-friendly message in the chat
-            (0, exports.sendToUser)(io, messageData.userId, 'receive-ai-message', {
-                userId: messageData.userId,
-                message: `I'm sorry, I'm having trouble connecting right now. ${errorMessage.includes('API key') ? 'Please contact support - the AI service may need configuration.' : 'Please try again in a moment.'}`,
-                from: 'ai',
-            });
-        }
     }
-    catch (error) {
-        socket.emit('message-error', error.message || 'Failed to send AI message');
-    }
+    (0, exports.unregisterUserSocket)(socket);
 };
-exports.handleAIChatMessage = handleAIChatMessage;
+exports.cleanupSocket = cleanupSocket;
 /**
- * Handle video frame streaming
+ * Verify user has access to room
  */
-const handleVideoFrame = async (io, socket, videoData) => {
-    try {
-        if (socket.userType !== 'user' || socket.userId !== videoData.userId) {
-            socket.emit('message-error', 'Unauthorized');
-            return;
-        }
-        const streamRoomId = `live_stream_${videoData.userId}`;
-        // If frame description is provided, analyze it with XAI
-        if (videoData.frameDescription && videoData.exercise) {
-            try {
-                // Get previous corrections for context
-                const previousCorrections = (0, conversationStore_1.getVideoAnalysisHistory)(videoData.userId);
-                // Analyze frame with XAI
-                const analysis = await (0, xaiService_1.analyzeLiveVideoFrame)(videoData.userId, videoData.frameDescription, videoData.exercise, previousCorrections);
-                // Add correction to history if it's significant
-                if (analysis.severity !== 'info' || analysis.correction.length > 50) {
-                    (0, conversationStore_1.addToVideoAnalysisHistory)(videoData.userId, analysis.correction);
+const verifyRoomAccess = async (socket, roomId) => {
+    const room = rooms.get(roomId);
+    if (!room) {
+        return false;
+    }
+    // Check if user is a participant
+    if (!socket.userId || !room.participants.includes(socket.userId)) {
+        // For user-coach rooms, verify coach-student relationship
+        if (room.type === 'user-coach' && socket.userType === 'coach') {
+            const userId = room.participants.find(id => id !== socket.userId);
+            if (userId) {
+                const coach = await Coach_1.default.findById(socket.userId);
+                if (coach && coach.studentsId.some(id => id.toString() === userId)) {
+                    return true;
                 }
-                // Send form correction to user
-                const correction = {
-                    userId: videoData.userId,
-                    exercise: videoData.exercise,
-                    correction: analysis.correction,
-                    timestamp: new Date(),
-                    severity: analysis.severity,
-                };
-                (0, exports.sendToUser)(io, videoData.userId, 'form-correction', correction);
-            }
-            catch (error) {
-                console.error('Error analyzing video frame:', error);
-                // Don't emit error to user for video analysis failures, just log it
             }
         }
-        // Acknowledge video frame received
-        io.to(streamRoomId).emit('video-frame', {
-            ...videoData,
-            timestamp: new Date(),
-        });
+        return false;
     }
-    catch (error) {
-        socket.emit('message-error', error.message || 'Failed to process video frame');
-    }
+    return true;
 };
-exports.handleVideoFrame = handleVideoFrame;
+exports.verifyRoomAccess = verifyRoomAccess;
 //# sourceMappingURL=socketService.js.map

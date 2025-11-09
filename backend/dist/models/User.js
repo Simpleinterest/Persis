@@ -101,7 +101,7 @@ const UserSchema = new mongoose_1.Schema({
     timestamps: true, // This adds createdAt and updatedAt fields
 });
 // Index for faster queries
-// Note: userName already has an index from unique: true
+UserSchema.index({ userName: 1 });
 UserSchema.index({ coachId: 1 });
 const User = mongoose_1.default.model('User', UserSchema);
 exports.default = User;

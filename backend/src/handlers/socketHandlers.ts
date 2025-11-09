@@ -14,7 +14,9 @@ import {
 } from '../services/socketService';
 import User from '../models/User';
 import Coach from '../models/Coach';
+import VideoAnalysis from '../models/VideoAnalysis';
 import aiService from '../services/aiService';
+import { resetUserState } from '../services/stateTrackingService';
 
 /**
  * Setup socket event handlers
@@ -178,6 +180,11 @@ export const setupSocketHandlers = (io: Server) => {
         if (!socket.userId) {
           socket.emit('error', { error: 'Not authenticated' });
           return;
+        }
+
+        // Reset user state when stream stops
+        if (socket.userId) {
+          resetUserState(socket.userId);
         }
 
         // Broadcast stream stopped
@@ -356,7 +363,7 @@ export const setupSocketHandlers = (io: Server) => {
           type: data.analysisType,
         });
 
-        // Analyze video
+        // Analyze video (may return null if feedback should be suppressed)
         const analysis = await aiService.analyzeVideo({
           videoData: data.videoData,
           analysisType: data.analysisType as 'form' | 'progress' | 'technique' | 'general',
@@ -365,23 +372,58 @@ export const setupSocketHandlers = (io: Server) => {
           context,
         });
 
-        // Send analysis results
-        socket.emit('ai_analysis_complete', {
-          analysis: analysis.analysis,
-          type: analysis.type,
-        });
+        // Only send feedback if analysis was provided (not suppressed)
+        if (analysis) {
+          // Get user's coach ID
+          const user = await User.findById(socket.userId);
+          const coachId = user?.coachId || null;
 
-        // Also create a message with the analysis
-        const analysisMessage: SocketMessage = {
-          id: `${Date.now()}-analysis-${socket.id}`,
-          from: 'ai-coach',
-          to: socket.userId,
-          message: `Video Analysis (${analysis.type}):\n${analysis.analysis.formFeedback || 'Analysis complete'}`,
-          timestamp: analysis.timestamp,
-          type: 'video',
-        };
+          // Save video analysis to database for coach viewing
+          try {
+            const videoAnalysis = new VideoAnalysis({
+              userId: socket.userId,
+              coachId: coachId,
+              type: 'live',
+              summary: analysis.analysis.formFeedback || 'Form analysis complete',
+              feedback: analysis.analysis.formFeedback || null,
+              poseData: data.videoData?.landmarks || null,
+              metrics: {
+                score: analysis.analysis.score || 75,
+                exerciseType: data.exerciseType || 'general',
+                analysisType: analysis.type,
+              },
+              duration: data.videoData?.duration || 0,
+              coachVisible: true, // Live footage always visible to coach
+              studentPermission: true,
+              sessionId: data.videoData?.sessionId || `session-${Date.now()}`,
+            });
+            await videoAnalysis.save();
+          } catch (saveError: any) {
+            console.error('Failed to save video analysis:', saveError);
+            // Don't fail the request if saving fails
+          }
 
-        socket.emit('new_message', analysisMessage);
+          // Send analysis results
+          socket.emit('ai_analysis_complete', {
+            analysis: analysis.analysis,
+            type: analysis.type,
+          });
+
+          // Also create a message with the analysis for the chat
+          const analysisMessage: SocketMessage = {
+            id: `${Date.now()}-analysis-${socket.id}`,
+            from: 'ai-coach',
+            to: socket.userId,
+            message: analysis.analysis.formFeedback || 'Form analysis complete',
+            timestamp: analysis.timestamp,
+            type: 'video',
+          };
+
+          socket.emit('new_message', analysisMessage);
+        } else {
+          // Feedback was suppressed (too soon or duplicate) - silently skip
+          // Don't send any message to avoid spam
+        }
       } catch (error: any) {
         console.error('AI video analysis error:', error);
         socket.emit('error', { error: error.message || 'Failed to analyze video' });

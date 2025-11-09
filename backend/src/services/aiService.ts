@@ -3,6 +3,7 @@ import xaiService from './xaiService';
 import User from '../models/User';
 import Coach from '../models/Coach';
 import { getOrCreateRoom, generateRoomId } from './socketService';
+import { detectStateFromPose, updateUserState, shouldProvideFeedback, recordFeedback, getStateContext } from './stateTrackingService';
 
 /**
  * AI Service
@@ -12,8 +13,8 @@ class AIService {
   /**
    * Build system prompt with user context and coach parameters
    */
-  private buildSystemPrompt(context: AIChatContext): string {
-    let prompt = `You are Persis, a friendly and conversational AI fitness coach. You chat like a supportive friend who knows fitness, not a formal trainer.`;
+  private buildSystemPrompt(context: AIChatContext, isVideoAnalysis: boolean = false): string {
+    let prompt = `You are Persis, a professional AI fitness coach. You provide technical, actionable feedback based on exercise form and technique.`;
 
     // Add user profile context
     if (context.userProfile) {
@@ -35,20 +36,46 @@ class AIService {
       prompt += `\n\nCoach Instructions:\n${context.coachParameters}`;
     }
 
-    prompt += `\n\nCRITICAL: Keep responses SHORT and CONVERSATIONAL:
+    if (isVideoAnalysis) {
+      prompt += `\n\nCRITICAL VIDEO ANALYSIS GUIDELINES:
+- Provide SPECIFIC, TECHNICAL feedback based on what you observe in the pose/landmarks
+- Focus on FORM CORRECTIONS: alignment, posture, joint angles, movement patterns
+- Be ACTIONABLE: Tell the user exactly what to change and how
+- AVOID generic encouragement like "Good job!" or "Keep it up!"
+- Instead of "Good form!", say "Your back is straight and knees are aligned with toes - excellent"
+- Instead of "Try harder!", say "Your left shoulder is dropping 3 inches. Engage your core and pull it level with your right shoulder"
+- Only provide feedback when there's a SIGNIFICANT observation or correction needed
+- Keep feedback to 1-2 sentences maximum (20-50 words)
+- Use anatomical terms when helpful: "knees", "hips", "spine", "shoulders", "elbows"
+- Focus on safety: point out potential injury risks immediately
+- Be precise: "Your knee is caving inward 5 degrees" is better than "Watch your knee alignment"`;
+
+      // Add state context if available
+      if (context.stateContext) {
+        prompt += `\n\nCurrent Exercise State:\n${context.stateContext}`;
+        prompt += `\n\nIMPORTANT: Only provide feedback if:
+1. The user's state has changed to a new phase (e.g., started a new repetition)
+2. You detect a NEW, significant form issue that hasn't been addressed
+3. There's a safety concern that needs immediate attention
+DO NOT repeat the same feedback you gave before.`;
+      }
+    } else {
+      prompt += `\n\nCRITICAL: Keep responses SHORT and CONVERSATIONAL:
 - 2-4 sentences maximum (50-150 words)
-- Write like you're texting a friend
+- Write like a knowledgeable but friendly coach
 - Get straight to the point, no fluff
-- Be friendly, casual, and encouraging
-- Use simple language, avoid jargon
+- Be friendly, encouraging, but TECHNICAL when discussing form
+- Use simple language, but include specific anatomical references when helpful
 - Be direct with actionable advice
 
 Guidelines:
 - Focus on safety and proper form
+- Provide specific, technical corrections when discussing exercises
 - Be motivating but realistic
 - For medical questions, suggest consulting a healthcare professional
 - Use the user's name occasionally (not every message)
-- Keep it simple and easy to understand`;
+- Keep it simple and easy to understand, but include actionable details`;
+    }
 
     return prompt;
   }
@@ -120,7 +147,7 @@ Guidelines:
       const response = await xaiService.chatCompletion({
         messages,
         model: 'grok-3',
-        temperature: 0.8, // Higher for more conversational tone
+        temperature: 0.7, // Balanced for conversational but technical tone
         max_tokens: 200, // Reduced to enforce conciseness
       });
 
@@ -168,7 +195,7 @@ Guidelines:
       yield* xaiService.streamChatCompletion({
         messages,
         model: 'grok-3',
-        temperature: 0.8, // Slightly higher for more conversational tone
+        temperature: 0.7, // Balanced for conversational but technical tone
         max_tokens: 200, // Reduced from 1000 to enforce conciseness
       });
     } catch (error: any) {
@@ -180,12 +207,34 @@ Guidelines:
   /**
    * Analyze video for form and technique
    */
-  async analyzeVideo(request: VideoAnalysisRequest): Promise<VideoAnalysisResponse> {
+  async analyzeVideo(request: VideoAnalysisRequest): Promise<VideoAnalysisResponse | null> {
     try {
       // Get user context
       const context = request.context || await this.getUserContext(request.userId);
 
-      // Build context string
+      // Extract pose data from videoData if available
+      let landmarks: any[] = [];
+      let poseDescription = '';
+      
+      if (request.videoData && typeof request.videoData === 'object') {
+        const videoData = request.videoData as any;
+        if (videoData.landmarks && Array.isArray(videoData.landmarks)) {
+          landmarks = videoData.landmarks;
+        }
+        if (videoData.poseDescription && typeof videoData.poseDescription === 'string') {
+          poseDescription = videoData.poseDescription;
+        }
+      }
+
+      // Detect current state from pose
+      const detectedState = detectStateFromPose(landmarks, poseDescription);
+      const stateChanged = updateUserState(request.userId, detectedState);
+
+      // Get state context for AI
+      const stateContext = getStateContext(request.userId);
+      context.stateContext = stateContext;
+
+      // Build context string for AI analysis
       let contextString = `Analyzing workout video for ${context.userName}`;
       if (context.userProfile) {
         const profile = context.userProfile;
@@ -200,21 +249,43 @@ Guidelines:
       if (context.coachParameters) {
         contextString += `\nCoach notes: ${context.coachParameters}`;
       }
+      contextString += `\n\n${stateContext}`;
 
-      // For now, we'll use a text description approach
-      // In a full implementation, you would:
-      // 1. Extract frames from video
-      // 2. Use computer vision to analyze form
-      // 3. Generate description
-      // 4. Send to AI for analysis
+      // Build video description from pose data
+      let videoDescription = '';
+      if (poseDescription) {
+        videoDescription = `Pose Description: ${poseDescription}`;
+      }
+      if (landmarks.length > 0) {
+        videoDescription += `\nDetected ${landmarks.length} body landmarks`;
+        // Add key landmark positions for analysis
+        if (landmarks[11] && landmarks[12]) {
+          videoDescription += `\nShoulders detected`;
+        }
+        if (landmarks[23] && landmarks[24]) {
+          videoDescription += `\nHips detected`;
+        }
+        if (landmarks[25] && landmarks[26]) {
+          videoDescription += `\nKnees detected`;
+        }
+      } else {
+        videoDescription = 'Pose landmarks not detected - user may be out of frame or pose incomplete';
+      }
 
-      // Simulated video description (replace with actual CV processing)
-      const videoDescription = request.videoData instanceof Buffer
-        ? 'Video frame data received for analysis'
-        : 'Video analysis requested';
+      // Build system prompt for video analysis
+      const systemPrompt = this.buildSystemPrompt(context, true);
 
-      // Analyze using XAI
-      const analysisText = await xaiService.analyzeVideo(videoDescription, contextString);
+      // Analyze using XAI with stateful context
+      const analysisText = await xaiService.analyzeVideo(videoDescription, contextString, { systemPrompt });
+
+      // Check if we should provide this feedback (avoid spam)
+      if (!shouldProvideFeedback(request.userId, analysisText)) {
+        // Don't provide feedback - it's too soon or duplicate
+        return null;
+      }
+
+      // Record the feedback
+      recordFeedback(request.userId, analysisText);
 
       // Parse analysis into structured response
       const analysis = this.parseVideoAnalysis(analysisText, request.analysisType);

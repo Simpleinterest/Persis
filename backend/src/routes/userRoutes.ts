@@ -4,6 +4,11 @@ import {
   updateUserProfile,
   requestCoach,
   removeCoach,
+  getCoachRequests,
+  acceptCoachRequest,
+  rejectCoachRequest,
+  uploadVideo,
+  updateVideoPermission,
 } from '../controllers/userController';
 import { authenticateUser } from '../middleware/auth';
 
@@ -19,6 +24,15 @@ router.put('/profile', updateUserProfile);
 // Coach assignment routes
 router.post('/request-coach/:coachId', requestCoach);
 router.delete('/coach', removeCoach);
+
+// Coach request routes
+router.get('/coach-requests', getCoachRequests);
+router.post('/coach-requests/:requestId/accept', acceptCoachRequest);
+router.post('/coach-requests/:requestId/reject', rejectCoachRequest);
+
+// Video upload routes
+router.post('/videos/upload', uploadVideo);
+router.put('/videos/:videoId/permission', updateVideoPermission);
 
 export default router;
 
