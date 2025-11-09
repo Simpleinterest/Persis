@@ -4,6 +4,7 @@ import { Header, Footer } from './components/layout';
 import LandingPage from './pages/LandingPage';
 import LoginPage from './pages/auth/LoginPage';
 import RegisterPage from './pages/auth/RegisterPage';
+import CVAnalyzer from './components/CVAnalyzer';
 import { ROUTES } from './utils/constants';
 import { isAuthenticated } from './services/auth';
 import './App.css';
@@ -41,6 +42,7 @@ function App() {
             <Route path={ROUTES.HOME} element={<LandingPage />} />
             <Route path={ROUTES.LOGIN} element={<LoginPage />} />
             <Route path={ROUTES.REGISTER} element={<RegisterPage />} />
+            <Route path="/cv-analyzer" element={<CVAnalyzer />} />
             {/* Protected routes will be added in subsequent steps */}
           </Routes>
         </AppLayout>
