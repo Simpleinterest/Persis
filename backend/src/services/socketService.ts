@@ -1,269 +1,212 @@
-import { Server } from 'socket.io';
-import { AuthenticatedSocket, ChatMessage, ConversationRoom, AIFormCorrection } from '../types/socket.types';
-import User from '../models/User';
+import { Server as SocketIOServer } from 'socket.io';
+import { AuthenticatedSocket, ChatRoom } from '../types/socket.types';
 import Coach from '../models/Coach';
-import { getAIChatResponse, analyzeLiveVideoFrame, analyzeVideoForm } from './xaiService';
-import {
-  getConversationHistory,
-  addToConversationHistory,
-  getVideoAnalysisHistory,
-  addToVideoAnalysisHistory,
-  clearVideoAnalysisHistory,
-} from './conversationStore';
 
-// Store active conversations
-const activeConversations = new Map<string, ConversationRoom>();
-// Store user socket connections
-const userSockets = new Map<string, string[]>(); // userId -> socketIds[]
+// In-memory storage for rooms (in production, use Redis or database)
+const rooms = new Map<string, ChatRoom>();
+const userRooms = new Map<string, Set<string>>(); // userId -> Set of roomIds
+const roomSockets = new Map<string, Set<string>>(); // roomId -> Set of socketIds
+const userSockets = new Map<string, Set<string>>(); // userId -> Set of socketIds (track all sockets for a user)
 
 /**
- * Generate conversation ID
+ * Generate room ID for user-coach or user-ai chat
  */
-export const generateConversationId = (userId: string, coachId: string): string => {
-  const ids = [userId, coachId].sort();
-  return `conv_${ids[0]}_${ids[1]}`;
+export const generateRoomId = (userId: string, otherId: string, type: 'user-coach' | 'user-ai'): string => {
+  const sortedIds = [userId, otherId].sort();
+  return `${type}:${sortedIds.join(':')}`;
 };
 
 /**
- * Get or create conversation room
+ * Create or get chat room
  */
-export const getOrCreateConversation = (userId: string, coachId: string): ConversationRoom => {
-  const conversationId = generateConversationId(userId, coachId);
-
-  if (!activeConversations.has(conversationId)) {
-    const room: ConversationRoom = {
-      id: conversationId,
-      type: 'user-coach',
-      participants: [userId, coachId],
-      createdAt: new Date(),
-    };
-    activeConversations.set(conversationId, room);
+export const getOrCreateRoom = (
+  userId: string,
+  otherId: string,
+  type: 'user-coach' | 'user-ai'
+): ChatRoom => {
+  const roomId = generateRoomId(userId, otherId, type);
+  
+  if (rooms.has(roomId)) {
+    return rooms.get(roomId)!;
   }
 
-  return activeConversations.get(conversationId)!;
+  const room: ChatRoom = {
+    id: roomId,
+    participants: [userId, otherId],
+    type,
+    createdAt: new Date(),
+  };
+
+  rooms.set(roomId, room);
+  return room;
 };
 
 /**
- * Join user to socket room
+ * Join a room
  */
-export const joinUserToRoom = (socket: AuthenticatedSocket, roomId: string): void => {
+export const joinRoom = (socket: AuthenticatedSocket, roomId: string): void => {
   socket.join(roomId);
-  console.log(`User ${socket.userId} joined room ${roomId}`);
+  
+  // Track room membership
+  if (!roomSockets.has(roomId)) {
+    roomSockets.set(roomId, new Set());
+  }
+  roomSockets.get(roomId)!.add(socket.id);
+
+  // Track user's rooms
+  if (socket.userId) {
+    if (!userRooms.has(socket.userId)) {
+      userRooms.set(socket.userId, new Set());
+    }
+    userRooms.get(socket.userId)!.add(roomId);
+  }
+
+  console.log(`Socket ${socket.id} joined room ${roomId}`);
 };
 
 /**
- * Leave user from socket room
+ * Leave a room
  */
-export const leaveUserFromRoom = (socket: AuthenticatedSocket, roomId: string): void => {
+export const leaveRoom = (socket: AuthenticatedSocket, roomId: string): void => {
   socket.leave(roomId);
-  console.log(`User ${socket.userId} left room ${roomId}`);
-};
 
-/**
- * Register user socket
- */
-export const registerUserSocket = (userId: string, socketId: string): void => {
-  if (!userSockets.has(userId)) {
-    userSockets.set(userId, []);
-  }
-  userSockets.get(userId)!.push(socketId);
-};
-
-/**
- * Unregister user socket
- */
-export const unregisterUserSocket = (userId: string, socketId: string): void => {
-  const sockets = userSockets.get(userId);
-  if (sockets) {
-    const index = sockets.indexOf(socketId);
-    if (index > -1) {
-      sockets.splice(index, 1);
-    }
-    if (sockets.length === 0) {
-      userSockets.delete(userId);
+  // Remove from room tracking
+  if (roomSockets.has(roomId)) {
+    roomSockets.get(roomId)!.delete(socket.id);
+    if (roomSockets.get(roomId)!.size === 0) {
+      roomSockets.delete(roomId);
     }
   }
+
+  // Remove from user's rooms
+  if (socket.userId && userRooms.has(socket.userId)) {
+    userRooms.get(socket.userId)!.delete(roomId);
+    if (userRooms.get(socket.userId)!.size === 0) {
+      userRooms.delete(socket.userId);
+    }
+  }
+
+  console.log(`Socket ${socket.id} left room ${roomId}`);
 };
 
 /**
- * Get user socket IDs
+ * Broadcast message to room
  */
-export const getUserSocketIds = (userId: string): string[] => {
-  return userSockets.get(userId) || [];
-};
-
-/**
- * Broadcast message to conversation room
- */
-export const broadcastToConversation = (
-  io: Server,
-  conversationId: string,
+export const broadcastToRoom = (
+  io: SocketIOServer,
+  roomId: string,
   event: string,
-  data: any
+  data: any,
+  excludeSocketId?: string
 ): void => {
-  io.to(conversationId).emit(event, data);
-};
-
-/**
- * Send message to specific user
- */
-export const sendToUser = (io: Server, userId: string, event: string, data: any): void => {
-  const socketIds = getUserSocketIds(userId);
-  socketIds.forEach(socketId => {
-    io.to(socketId).emit(event, data);
-  });
-};
-
-/**
- * Handle chat message
- */
-export const handleChatMessage = async (
-  io: Server,
-  socket: AuthenticatedSocket,
-  messageData: { message: string; conversationId: string; receiverId?: string }
-): Promise<void> => {
-  try {
-    // Validate message data
-    if (!messageData.message || !messageData.conversationId) {
-      socket.emit('message-error', 'Invalid message data');
-      return;
-    }
-
-    // Create message object
-    const message: ChatMessage = {
-      senderId: socket.userId!,
-      senderType: socket.userType!,
-      receiverId: messageData.receiverId,
-      receiverType: socket.userType === 'user' ? 'coach' : 'user',
-      message: messageData.message,
-      timestamp: new Date(),
-      conversationId: messageData.conversationId,
-      type: 'text',
-      id: `msg_${Date.now()}_${socket.userId}`,
-    };
-
-    // Broadcast to conversation room
-    broadcastToConversation(io, messageData.conversationId, 'receive-message', message);
-
-    // Confirm message was sent
-    socket.emit('message-sent', { messageId: message.id });
-  } catch (error: any) {
-    socket.emit('message-error', error.message || 'Failed to send message');
+  if (excludeSocketId) {
+    io.to(roomId).except(excludeSocketId).emit(event, data);
+  } else {
+    io.to(roomId).emit(event, data);
   }
 };
 
 /**
- * Handle AI chat message
+ * Get user's rooms
  */
-export const handleAIChatMessage = async (
-  io: Server,
-  socket: AuthenticatedSocket,
-  messageData: { userId: string; message: string }
-): Promise<void> => {
-  try {
-    if (socket.userType !== 'user' || socket.userId !== messageData.userId) {
-      socket.emit('message-error', 'Unauthorized');
-      return;
+export const getUserRooms = (userId: string): string[] => {
+  const userRoomSet = userRooms.get(userId);
+  return userRoomSet ? Array.from(userRoomSet) : [];
+};
+
+/**
+ * Register a socket for a user
+ */
+export const registerUserSocket = (socket: AuthenticatedSocket): void => {
+  if (socket.userId) {
+    if (!userSockets.has(socket.userId)) {
+      userSockets.set(socket.userId, new Set());
     }
-
-    const aiRoomId = `ai_chat_${messageData.userId}`;
-
-    // Get conversation history
-    const conversationHistory = getConversationHistory(messageData.userId);
-
-    // Add user message to history
-    addToConversationHistory(messageData.userId, {
-      role: 'user',
-      content: messageData.message,
-    });
-
-    try {
-      // Get AI response from XAI
-      const aiResponseText = await getAIChatResponse(
-        messageData.userId,
-        messageData.message,
-        conversationHistory
-      );
-
-      // Add AI response to history
-      addToConversationHistory(messageData.userId, {
-        role: 'assistant',
-        content: aiResponseText,
-      });
-
-      // Send AI response to user
-      sendToUser(io, messageData.userId, 'receive-ai-message', {
-        userId: messageData.userId,
-        message: aiResponseText,
-        from: 'ai',
-      });
-    } catch (error: any) {
-      console.error('XAI API Error:', error);
-      socket.emit('message-error', 'Failed to get AI response. Please try again.');
-    }
-  } catch (error: any) {
-    socket.emit('message-error', error.message || 'Failed to send AI message');
+    userSockets.get(socket.userId)!.add(socket.id);
+    console.log(`Registered socket ${socket.id} for user ${socket.userId} (Total: ${userSockets.get(socket.userId)!.size})`);
   }
 };
 
 /**
- * Handle video frame streaming
+ * Unregister a socket for a user
  */
-export const handleVideoFrame = async (
-  io: Server,
-  socket: AuthenticatedSocket,
-  videoData: { userId: string; videoData: string; frameNumber?: number; exercise?: string; frameDescription?: string }
-): Promise<void> => {
-  try {
-    if (socket.userType !== 'user' || socket.userId !== videoData.userId) {
-      socket.emit('message-error', 'Unauthorized');
-      return;
+export const unregisterUserSocket = (socket: AuthenticatedSocket): void => {
+  if (socket.userId && userSockets.has(socket.userId)) {
+    userSockets.get(socket.userId)!.delete(socket.id);
+    if (userSockets.get(socket.userId)!.size === 0) {
+      userSockets.delete(socket.userId);
     }
+    console.log(`Unregistered socket ${socket.id} for user ${socket.userId} (Remaining: ${userSockets.get(socket.userId)?.size || 0})`);
+  }
+};
 
-    const streamRoomId = `live_stream_${videoData.userId}`;
+/**
+ * Get all sockets for a user
+ */
+export const getUserSockets = (userId: string): Set<string> => {
+  return userSockets.get(userId) || new Set();
+};
 
-    // If frame description is provided, analyze it with XAI
-    if (videoData.frameDescription && videoData.exercise) {
-      try {
-        // Get previous corrections for context
-        const previousCorrections = getVideoAnalysisHistory(videoData.userId);
-
-        // Analyze frame with XAI
-        const analysis = await analyzeLiveVideoFrame(
-          videoData.userId,
-          videoData.frameDescription,
-          videoData.exercise,
-          previousCorrections
-        );
-
-        // Add correction to history if it's significant
-        if (analysis.severity !== 'info' || analysis.correction.length > 50) {
-          addToVideoAnalysisHistory(videoData.userId, analysis.correction);
-        }
-
-        // Send form correction to user
-        const correction: AIFormCorrection = {
-          userId: videoData.userId,
-          exercise: videoData.exercise,
-          correction: analysis.correction,
-          timestamp: new Date(),
-          severity: analysis.severity,
-        };
-
-        sendToUser(io, videoData.userId, 'form-correction', correction);
-      } catch (error: any) {
-        console.error('Error analyzing video frame:', error);
-        // Don't emit error to user for video analysis failures, just log it
+/**
+ * Disconnect all sockets for a user (except the current one)
+ */
+export const disconnectOtherUserSockets = (io: SocketIOServer, userId: string, keepSocketId: string): void => {
+  const sockets = getUserSockets(userId);
+  let disconnectedCount = 0;
+  sockets.forEach(socketId => {
+    if (socketId !== keepSocketId) {
+      const socket = io.sockets.sockets.get(socketId);
+      if (socket) {
+        socket.disconnect(true);
+        disconnectedCount++;
       }
     }
-
-    // Acknowledge video frame received
-    io.to(streamRoomId).emit('video-frame', {
-      ...videoData,
-      timestamp: new Date(),
-    });
-  } catch (error: any) {
-    socket.emit('message-error', error.message || 'Failed to process video frame');
+  });
+  if (disconnectedCount > 0) {
+    console.log(`Disconnected ${disconnectedCount} duplicate socket(s) for user ${userId}, keeping ${keepSocketId}`);
   }
+};
+
+/**
+ * Cleanup on disconnect
+ */
+export const cleanupSocket = (socket: AuthenticatedSocket): void => {
+  if (socket.userId && userRooms.has(socket.userId)) {
+    const roomIds = Array.from(userRooms.get(socket.userId)!);
+    roomIds.forEach(roomId => {
+      leaveRoom(socket, roomId);
+    });
+  }
+  unregisterUserSocket(socket);
+};
+
+/**
+ * Verify user has access to room
+ */
+export const verifyRoomAccess = async (
+  socket: AuthenticatedSocket,
+  roomId: string
+): Promise<boolean> => {
+  const room = rooms.get(roomId);
+  if (!room) {
+    return false;
+  }
+
+  // Check if user is a participant
+  if (!socket.userId || !room.participants.includes(socket.userId)) {
+    // For user-coach rooms, verify coach-student relationship
+    if (room.type === 'user-coach' && socket.userType === 'coach') {
+      const userId = room.participants.find(id => id !== socket.userId);
+      if (userId) {
+        const coach = await Coach.findById(socket.userId);
+        if (coach && coach.studentsId.some(id => id.toString() === userId)) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  return true;
 };
 

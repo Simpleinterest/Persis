@@ -7,8 +7,7 @@ import connectDB from './config/database';
 import authRoutes from './routes/authRoutes';
 import userRoutes from './routes/userRoutes';
 import coachRoutes from './routes/coachRoutes';
-import aiRoutes from './routes/aiRoutes';
-import { socketAuthMiddleware } from './middleware/socketAuth';
+import { setupSocketAuth } from './middleware/socketAuth';
 import { setupSocketHandlers } from './handlers/socketHandlers';
 
 // Load environment variables
@@ -20,19 +19,30 @@ import './models/Coach';
 
 const app = express();
 const httpServer = createServer(app);
+
+const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:3000";
+
 const io = new Server(httpServer, {
   cors: {
-    origin: process.env.FRONTEND_URL || "http://localhost:3000",
+    origin: FRONTEND_URL,
     methods: ["GET", "POST"],
     credentials: true,
+    allowedHeaders: ["Authorization"],
   },
   allowEIO3: true,
+  pingTimeout: 60000,
+  pingInterval: 25000,
 });
 
 const PORT = process.env.PORT || 5001;
 
 // Middleware
-app.use(cors());
+app.use(cors({
+  origin: FRONTEND_URL,
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+}));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -62,11 +72,8 @@ app.use('/api/user', userRoutes);
 // Coach routes (protected)
 app.use('/api/coach', coachRoutes);
 
-// AI routes (protected)
-app.use('/api/ai', aiRoutes);
-
-// WebSocket authentication middleware
-socketAuthMiddleware(io);
+// WebSocket authentication
+setupSocketAuth(io);
 
 // WebSocket event handlers
 setupSocketHandlers(io);
