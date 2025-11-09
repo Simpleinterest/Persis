@@ -1,0 +1,45 @@
+/**
+ * A 2D landmark type (all we need from MediaPipe).
+ */
+interface Landmark {
+  x: number;
+  y: number;
+  z?: number; // Optional z, we don't use it
+}
+
+/**
+ * Calculates the stable 2D angle between three landmarks.
+ * 
+ * @param a The first point (e.g., shoulder)
+ * @param b The vertex (e.g., hip)
+ * @param c The third point (e.g., knee)
+ * @returns The angle in degrees
+ */
+export function calculate_angle_2d(a: Landmark, b: Landmark, c: Landmark): number {
+  // 1. Get 2D vectors
+  const ba = { x: a.x - b.x, y: a.y - b.y };
+  const bc = { x: c.x - b.x, y: c.y - b.y };
+
+  // 2. Calculate dot product and magnitudes
+  const dotProduct = ba.x * bc.x + ba.y * bc.y;
+  const magBA = Math.sqrt(ba.x * ba.x + ba.y * ba.y);
+  const magBC = Math.sqrt(bc.x * bc.x + bc.y * bc.y);
+
+  // 3. Calculate cosine and angle
+  // Add a small epsilon to avoid division by zero
+  const epsilon = 1e-6;
+  let cosTheta = dotProduct / (magBA * magBC + epsilon);
+
+  // 4. Clamp value to avoid Math.acos domain errors
+  if (cosTheta > 1.0) {
+    cosTheta = 1.0;
+  }
+  if (cosTheta < -1.0) {
+    cosTheta = -1.0;
+  }
+
+  // 5. Get the angle and convert to degrees
+  const angle = Math.acos(cosTheta) * (180 / Math.PI);
+  return angle;
+}
+
