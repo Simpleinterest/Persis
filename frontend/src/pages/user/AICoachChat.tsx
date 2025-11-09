@@ -30,6 +30,14 @@ const AICoachChat: React.FC = () => {
   const [allowCoachView, setAllowCoachView] = useState(true);
   const [uploadingVideo, setUploadingVideo] = useState(false);
   const [pendingVideoFile, setPendingVideoFile] = useState<File | null>(null);
+  const [exerciseType, setExerciseType] = useState<string>('general');
+  const [sessionStartTime, setSessionStartTime] = useState<Date | null>(null);
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+  const [showExerciseTypeModal, setShowExerciseTypeModal] = useState(false);
+  // Refs for accessing current values in intervals
+  const exerciseTypeRef = useRef<string>('general');
+  const sessionStartTimeRef = useRef<Date | null>(null);
+  const currentSessionIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     // Connect to WebSocket - use a ref to prevent multiple connections
@@ -436,53 +444,52 @@ const AICoachChat: React.FC = () => {
         cvService.processFrame(videoRef.current);
       }
     }, 33); // ~30 FPS
-
-    // Send frames with pose data for AI analysis every 3 seconds
-    // Use current roomId from closure
-    const currentRoomId = roomId;
+    
+    // Send frames with pose data for AI analysis every 5 seconds
+    // Use refs to access current values in the interval
     const analysisInterval = setInterval(() => {
-      if (videoRef.current && poseResultsRef.current && currentRoomId && !videoRef.current.paused) {
-        const now = Date.now();
-        // Only send analysis if we have pose data and enough time has passed
-        if (now - lastAnalysisTimeRef.current > 3000) {
-          // Create a temporary function that uses currentRoomId
-          if (videoRef.current && poseResultsRef.current && currentRoomId) {
-            try {
-              // Get video frame as image data
-              const canvas = document.createElement('canvas');
-              canvas.width = videoRef.current.videoWidth;
-              canvas.height = videoRef.current.videoHeight;
-              const ctx = canvas.getContext('2d');
-              
-              if (ctx) {
-                ctx.drawImage(videoRef.current, 0, 0);
-                const imageData = canvas.toDataURL('image/jpeg', 0.8);
+      if (videoRef.current && poseResultsRef.current && roomId && !videoRef.current.paused) {
+        try {
+          // Calculate session duration
+          const sessionStart = sessionStartTimeRef.current;
+          const duration = sessionStart 
+            ? Math.floor((Date.now() - sessionStart.getTime()) / 1000) 
+            : 0;
 
-                // Get pose landmarks
-                const landmarks = cvService.convertLandmarksToArray(poseResultsRef.current);
-                const poseDesc = cvService.getPoseDescription(poseResultsRef.current);
+          // Get video frame as image data
+          const canvas = document.createElement('canvas');
+          canvas.width = videoRef.current.videoWidth;
+          canvas.height = videoRef.current.videoHeight;
+          const ctx = canvas.getContext('2d');
+          
+          if (ctx) {
+            ctx.drawImage(videoRef.current, 0, 0);
+            const imageData = canvas.toDataURL('image/jpeg', 0.8);
 
-                // Send to backend for AI analysis
-                websocketService.sendVideoAnalysis(
-                  {
-                    image: imageData,
-                    landmarks: landmarks,
-                    poseDescription: poseDesc,
-                    timestamp: new Date().toISOString(),
-                  },
-                  'form',
-                  undefined,
-                  currentRoomId
-                );
-              }
-            } catch (error) {
-              console.error('Error sending frame for analysis:', error);
-            }
+            // Get pose landmarks
+            const landmarks = cvService.convertLandmarksToArray(poseResultsRef.current);
+            const poseDesc = cvService.getPoseDescription(poseResultsRef.current);
+
+            // Send to backend for AI analysis with session info
+            websocketService.sendVideoAnalysis(
+              {
+                image: imageData,
+                landmarks: landmarks,
+                poseDescription: poseDesc,
+                timestamp: new Date().toISOString(),
+                sessionId: currentSessionIdRef.current || `session-${Date.now()}`,
+                duration: duration,
+              },
+              'form',
+              exerciseTypeRef.current || 'general',
+              roomId
+            );
           }
-          lastAnalysisTimeRef.current = now;
+        } catch (error) {
+          console.error('Error sending frame for analysis:', error);
         }
       }
-    }, 3000);
+    }, 5000); // Send analysis every 5 seconds
 
     // Store analysis interval
     (cvFrameIntervalRef.current as any).analysisInterval = analysisInterval;
@@ -540,6 +547,18 @@ const AICoachChat: React.FC = () => {
     try {
       if (!roomId) return;
 
+      // Show exercise type selection modal first
+      setShowExerciseTypeModal(true);
+    } catch (error) {
+      console.error('Failed to start live mode:', error);
+      alert('Failed to access camera. Please check permissions.');
+    }
+  };
+
+  const handleConfirmExerciseType = async () => {
+    try {
+      if (!roomId) return;
+
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
           facingMode: 'user', // Default to built-in webcam
@@ -552,14 +571,28 @@ const AICoachChat: React.FC = () => {
       streamRef.current = stream;
       setIsLiveMode(true);
       setIsStreaming(true);
+      
+      // Generate session ID and track start time
+      const sessionId = `session-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      const startTime = new Date();
+      setCurrentSessionId(sessionId);
+      setSessionStartTime(startTime);
+      // Update refs for use in intervals
+      exerciseTypeRef.current = exerciseType;
+      sessionStartTimeRef.current = startTime;
+      currentSessionIdRef.current = sessionId;
+      
       websocketService.startStream(roomId);
 
       websocketService.onStreamStarted((data) => {
         console.log('Stream started:', data);
       });
+      
+      setShowExerciseTypeModal(false);
     } catch (error) {
       console.error('Failed to start live mode:', error);
       alert('Failed to access camera. Please check permissions.');
+      setShowExerciseTypeModal(false);
     }
   };
 
@@ -590,6 +623,15 @@ const AICoachChat: React.FC = () => {
     if (videoRef.current) {
       videoRef.current.srcObject = null;
     }
+
+    // Reset session tracking
+    setSessionStartTime(null);
+    setCurrentSessionId(null);
+    setExerciseType('general');
+    // Reset refs
+    exerciseTypeRef.current = 'general';
+    sessionStartTimeRef.current = null;
+    currentSessionIdRef.current = null;
 
     // Clear canvas
     if (canvasRef.current) {
@@ -899,6 +941,71 @@ const AICoachChat: React.FC = () => {
                 disabled={uploadingVideo}
               >
                 {uploadingVideo ? 'Uploading...' : 'Upload & Analyze'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Exercise Type Selection Modal */}
+      {showExerciseTypeModal && (
+        <div className="modal-overlay" onClick={() => setShowExerciseTypeModal(false)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Select Exercise Type</h2>
+              <button 
+                className="modal-close"
+                onClick={() => setShowExerciseTypeModal(false)}
+              >
+                ×
+              </button>
+            </div>
+            <div className="modal-body">
+              <p style={{ marginBottom: '1rem', color: 'rgba(255, 255, 255, 0.9)' }}>
+                What exercise are you about to perform?
+              </p>
+              <div className="form-group">
+                <label htmlFor="exercise-type">Exercise Type</label>
+                <select
+                  id="exercise-type"
+                  className="exercise-type-select"
+                  value={exerciseType}
+                  onChange={(e) => {
+                    setExerciseType(e.target.value);
+                    exerciseTypeRef.current = e.target.value;
+                  }}
+                >
+                  <option value="general">General Exercise</option>
+                  <option value="squats">Squats</option>
+                  <option value="pushups">Push-ups</option>
+                  <option value="planks">Planks</option>
+                  <option value="lunges">Lunges</option>
+                  <option value="deadlifts">Deadlifts</option>
+                  <option value="overhead_press">Overhead Press</option>
+                  <option value="bench_press">Bench Press</option>
+                  <option value="pullups">Pull-ups</option>
+                  <option value="running">Running</option>
+                  <option value="yoga">Yoga</option>
+                  <option value="stretching">Stretching</option>
+                  <option value="cardio">Cardio</option>
+                  <option value="strength">Strength Training</option>
+                </select>
+              </div>
+            </div>
+            <div className="modal-actions">
+              <button 
+                type="button" 
+                className="btn-cancel"
+                onClick={() => setShowExerciseTypeModal(false)}
+              >
+                Cancel
+              </button>
+              <button 
+                type="button" 
+                className="btn-submit"
+                onClick={handleConfirmExerciseType}
+              >
+                Start Live Mode
               </button>
             </div>
           </div>

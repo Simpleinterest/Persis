@@ -33,6 +33,16 @@ const Sidebar: React.FC = () => {
           {userType === 'user' && (
             <>
               <Link 
+                to="/dashboard" 
+                className={`nav-item ${location.pathname === '/dashboard' ? 'active' : ''}`}
+              >
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" stroke="currentColor" strokeWidth="2" fill="none"/>
+                  <polyline points="9 22 9 12 15 12 15 22" stroke="currentColor" strokeWidth="2" fill="none"/>
+                </svg>
+                <span>Dashboard</span>
+              </Link>
+              <Link 
                 to="/ai-coach" 
                 className={`nav-item ${location.pathname === '/ai-coach' ? 'active' : ''}`}
               >
@@ -70,8 +80,8 @@ const Sidebar: React.FC = () => {
             </>
           )}
           <Link 
-            to="/settings" 
-            className={`nav-item ${location.pathname === '/settings' ? 'active' : ''}`}
+            to={userType === 'user' ? '/settings' : '/coach/settings'} 
+            className={`nav-item ${(userType === 'user' && location.pathname === '/settings') || (userType === 'coach' && location.pathname === '/coach/settings') ? 'active' : ''}`}
           >
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
               <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="2" fill="none"/>

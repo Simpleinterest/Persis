@@ -739,3 +739,28 @@
   opacity: 0.5;
   cursor: not-allowed;
 }
+
+/* Exercise Type Select */
+.exercise-type-select {
+  width: 100%;
+  padding: 0.75rem;
+  background-color: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 8px;
+  color: #ffffff;
+  font-size: 0.95rem;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.exercise-type-select:focus {
+  outline: none;
+  border-color: #F0E68C;
+  background-color: rgba(255, 255, 255, 0.15);
+}
+
+.exercise-type-select option {
+  background-color: #1a1a1a;
+  color: #ffffff;
+}

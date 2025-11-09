@@ -86,6 +86,22 @@ export const userService = {
   updateVideoPermission: async (videoId: string, allowCoachView: boolean): Promise<void> => {
     await api.put(`/api/user/videos/${videoId}/permission`, { studentPermission: allowCoachView });
   },
+
+  // Get user progress data
+  getUserProgress: async (period: 'week' | 'month' | 'year' | '2years' = 'month', sport?: string) => {
+    const params: any = { period };
+    if (sport) {
+      params.sport = sport;
+    }
+    const response = await api.get('/api/user/progress', { params });
+    return response.data;
+  },
+
+  // Get user's coaches
+  getUserCoaches: async () => {
+    const response = await api.get('/api/user/coaches');
+    return response.data.coaches;
+  },
 };
 
 export default userService;
