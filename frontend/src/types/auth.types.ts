@@ -1,5 +1,3 @@
-// Global type definitions for the frontend
-
 export interface User {
   _id: string;
   userName: string;
@@ -47,12 +45,14 @@ export interface AuthResponse {
   coach?: Coach;
 }
 
-export interface LoginCredentials {
+export interface LoginRequest {
   userName: string;
   passWord: string;
 }
 
-export interface RegisterUserData extends LoginCredentials {
+export interface RegisterUserRequest {
+  userName: string;
+  passWord: string;
   profile?: User['profile'];
   bodyWeight?: number;
   height?: number;
@@ -61,35 +61,10 @@ export interface RegisterUserData extends LoginCredentials {
   age?: number;
 }
 
-export interface RegisterCoachData extends LoginCredentials {
+export interface RegisterCoachRequest {
+  userName: string;
+  passWord: string;
   sports?: string[];
   profile?: Coach['profile'];
-}
-
-export interface ChatMessage {
-  id: string;
-  senderId: string;
-  senderType: 'user' | 'coach' | 'ai';
-  receiverId?: string;
-  receiverType?: 'user' | 'coach';
-  message: string;
-  timestamp: Date;
-  conversationId: string;
-  type: 'text' | 'video' | 'system';
-}
-
-export interface AIFormCorrection {
-  userId: string;
-  exercise: string;
-  correction: string;
-  timestamp: Date;
-  severity: 'info' | 'warning' | 'error';
-}
-
-export interface VideoAnalysis {
-  userId: string;
-  videoId: string;
-  analysis: string;
-  exercise: string;
 }
 
