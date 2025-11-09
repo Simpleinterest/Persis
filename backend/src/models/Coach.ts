@@ -63,7 +63,7 @@ const CoachSchema: Schema = new Schema(
 );
 
 // Index for faster queries
-// Note: userName already has an index from unique: true
+CoachSchema.index({ userName: 1 });
 CoachSchema.index({ studentsId: 1 });
 
 const Coach = mongoose.model<ICoach>('Coach', CoachSchema);

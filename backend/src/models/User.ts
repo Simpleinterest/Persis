@@ -72,7 +72,7 @@ const UserSchema: Schema = new Schema(
 );
 
 // Index for faster queries
-// Note: userName already has an index from unique: true
+UserSchema.index({ userName: 1 });
 UserSchema.index({ coachId: 1 });
 
 const User = mongoose.model<IUser>('User', UserSchema);
