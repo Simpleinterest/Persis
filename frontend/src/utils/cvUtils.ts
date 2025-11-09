@@ -1,7 +1,7 @@
 /**
  * A 2D landmark type (all we need from MediaPipe).
  */
-interface Landmark {
+export interface Landmark {
   x: number;
   y: number;
   z?: number; // Optional z, we don't use it
@@ -41,5 +41,18 @@ export function calculate_angle_2d(a: Landmark, b: Landmark, c: Landmark): numbe
   // 5. Get the angle and convert to degrees
   const angle = Math.acos(cosTheta) * (180 / Math.PI);
   return angle;
+}
+
+/**
+ * Calculates the angle of a line (p1-p2) relative to a perfect vertical line.
+ * @param p1 The first point (e.g., shoulder)
+ * @param p2 The second point (e.g., hip)
+ * @returns The angle in degrees (0 = vertical, 90 = horizontal)
+ */
+export function calculate_vertical_angle(p1: Landmark, p2: Landmark): number {
+  const p3 = { x: p2.x, y: p2.y - 1 }; // A point vertically "up" from p2
+  
+  // We use p2 as the vertex
+  return calculate_angle_2d(p1, p2, p3);
 }
 

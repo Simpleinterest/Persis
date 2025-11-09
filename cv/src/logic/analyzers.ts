@@ -1,4 +1,4 @@
-import { calculate_angle_2d } from '../utils/cvUtils';
+import { calculate_angle_2d, calculate_vertical_angle } from '../utils/cvUtils';
 
 // A generic landmark map from MediaPipe
 type LandmarkMap = { [key: number]: { x: number, y: number, z: number, visibility?: number } };
@@ -156,11 +156,13 @@ export class SquatAnalyzer extends ExerciseAnalyzer {
   private readonly DEPTH_THRESHOLD = 100; // Angle for a rep to count
   private readonly UP_THRESHOLD = 160;    // Angle to be considered "standing up"
   private readonly BACK_ANGLE_THRESHOLD = 150; // The *minimum* angle for good back form
+  private readonly TORSO_ANGLE_THRESHOLD = 45; // Max allowed forward lean
   private readonly VISIBILITY_THRESHOLD = 0.6; // Confidence threshold for landmarks
   private readonly GRACE_PERIOD_MS = 1500; // 1.5 seconds
   private detectionStartTime: number | null = null;
   private lastValidLandmarks: LandmarkMap | null = null;
   private readonly VELOCITY_THRESHOLD = 0.1; // Max allowed distance (normalized)
+  private activeSide: 'LEFT' | 'RIGHT' | 'NONE' = 'NONE';
   // -------------------------
 
   constructor() {
@@ -179,65 +181,78 @@ export class SquatAnalyzer extends ExerciseAnalyzer {
     const REQ_LANDMARKS_RIGHT = [R_SHOULDER, R_HIP, R_KNEE, R_ANKLE];
 
     // --- 2. Side-Selection Logic ---
-    let landmarksVisible = false;
     let hip: { x: number; y: number; z: number; visibility?: number } | undefined;
     let knee: { x: number; y: number; z: number; visibility?: number } | undefined;
     let ankle: { x: number; y: number; z: number; visibility?: number } | undefined;
     let shoulder: { x: number; y: number; z: number; visibility?: number } | undefined;
-    let primaryHipIndex: number | undefined; // Generic landmarks
+    let primaryHipIndex: number | undefined;
+    let currentSide: 'LEFT' | 'RIGHT' | 'NONE' = 'NONE';
 
     // Check visibility of the LEFT side
-    let leftVisible = REQ_LANDMARKS_LEFT.every(idx => 
+    const leftVisible = REQ_LANDMARKS_LEFT.every(idx => 
       this.landmarks[idx] && this.landmarks[idx].visibility !== undefined && this.landmarks[idx].visibility! > this.VISIBILITY_THRESHOLD
     );
 
     // Check visibility of the RIGHT side
-    let rightVisible = REQ_LANDMARKS_RIGHT.every(idx => 
+    const rightVisible = REQ_LANDMARKS_RIGHT.every(idx => 
       this.landmarks[idx] && this.landmarks[idx].visibility !== undefined && this.landmarks[idx].visibility! > this.VISIBILITY_THRESHOLD
     );
 
-    if (leftVisible) {
-      landmarksVisible = true;
-      shoulder = this.landmarks[L_SHOULDER];
-      hip = this.landmarks[L_HIP];
-      knee = this.landmarks[L_KNEE];
-      ankle = this.landmarks[L_ANKLE];
-      primaryHipIndex = L_HIP;
+    // Prioritize the currently active side, then left, then right.
+    if (this.activeSide === 'LEFT' && leftVisible) {
+      currentSide = 'LEFT';
+    } else if (this.activeSide === 'RIGHT' && rightVisible) {
+      currentSide = 'RIGHT';
+    } else if (leftVisible) {
+      currentSide = 'LEFT';
     } else if (rightVisible) {
-      landmarksVisible = true;
-      shoulder = this.landmarks[R_SHOULDER];
-      hip = this.landmarks[R_HIP];
-      knee = this.landmarks[R_KNEE];
-      ankle = this.landmarks[R_ANKLE];
-      primaryHipIndex = R_HIP;
+      currentSide = 'RIGHT';
     }
-    // If neither is visible, landmarksVisible remains false.
 
     // --- 3. Grace Period & Stability Logic ---
-    if (!landmarksVisible) {
-      // If we lose the skeleton, reset all checks.
-      this.detectionStartTime = null; // Reset grace period
-      this.lastValidLandmarks = null; // Reset jitter check
+    if (currentSide === 'NONE') {
+      this.detectionStartTime = null; 
+      this.lastValidLandmarks = null; 
+      this.activeSide = 'NONE';
       this.stage = "UP";
       this.feedback = "Make sure your full body is visible (side view)";
       return;
     }
 
     if (this.detectionStartTime === null) {
-      // First frame we've seen a skeleton
       this.detectionStartTime = Date.now();
       this.feedback = "Hold still, detecting...";
-      return; // Don't run logic yet
+      return;
     }
 
     const timeElapsed = Date.now() - this.detectionStartTime;
     if (timeElapsed < this.GRACE_PERIOD_MS) {
       this.feedback = `Stabilizing... (${((this.GRACE_PERIOD_MS - timeElapsed) / 1000).toFixed(1)}s)`;
-      return; // Still in grace period
+      return;
     }
 
-    // --- 4. Jitter Protection (Velocity Check) ---
-    // Uses the CHOSEN side's hip for the check
+    // --- 4. Jitter Protection (Handling Side-Switch) ---
+    if (this.activeSide !== currentSide) {
+      this.lastValidLandmarks = null;
+      this.activeSide = currentSide; 
+      this.feedback = "Switched tracking side. Hold.";
+      return;
+    }
+
+    if (this.activeSide === 'LEFT') {
+      shoulder = this.landmarks[L_SHOULDER];
+      hip = this.landmarks[L_HIP];
+      knee = this.landmarks[L_KNEE];
+      ankle = this.landmarks[L_ANKLE];
+      primaryHipIndex = L_HIP;
+    } else { // 'RIGHT'
+      shoulder = this.landmarks[R_SHOULDER];
+      hip = this.landmarks[R_HIP];
+      knee = this.landmarks[R_KNEE];
+      ankle = this.landmarks[R_ANKLE];
+      primaryHipIndex = R_HIP;
+    }
+
     if (this.lastValidLandmarks === null) {
       this.lastValidLandmarks = this.landmarks;
       this.feedback = "Tracking stable. Begin squat.";
@@ -264,20 +279,19 @@ export class SquatAnalyzer extends ExerciseAnalyzer {
 
     if (distance > this.VELOCITY_THRESHOLD) {
       this.feedback = "Jitter detected. Hold.";
-      return; // Reject this frame
+      return; 
     }
 
     // --- 5. Run Squat Logic (Frame is VALID) ---
     this.lastValidLandmarks = this.landmarks;
-    
-    // Calculate angles using the generic side-agnostic variables
+
     if (!hip || !knee || !ankle || !shoulder) {
       this.feedback = "Make sure your full body is visible (side view)";
       return;
     }
 
     const kneeAngle = calculate_angle_2d(hip, knee, ankle);
-    const backAngle = calculate_angle_2d(shoulder, hip, knee);
+    const torsoAngle = calculate_vertical_angle(shoulder, hip);
 
     // --- State Machine (Rep Counting) ---
     if (kneeAngle < this.DEPTH_THRESHOLD) {
@@ -290,13 +304,13 @@ export class SquatAnalyzer extends ExerciseAnalyzer {
 
     // --- State-Based Feedback ---
     if (this.stage === "DOWN") {
-      if (backAngle < this.BACK_ANGLE_THRESHOLD) {
-        this.feedback = "Keep your chest up!"; // Bad form
+      if (torsoAngle > this.TORSO_ANGLE_THRESHOLD) {
+        this.feedback = "Keep your chest up!"; 
       } else {
-        this.feedback = "Good depth!"; // Good form
+        this.feedback = "Good depth!"; 
       }
     } else { // i.e., stage is "UP"
-      this.feedback = "Begin Squat"; // Clear feedback
+      this.feedback = "Begin Squat"; 
     }
   }
 }

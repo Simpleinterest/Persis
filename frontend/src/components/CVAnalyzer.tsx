@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Pose, POSE_CONNECTIONS } from '@mediapipe/pose';
 import { drawConnectors, drawLandmarks } from '@mediapipe/drawing_utils';
-import { SprintStartAnalyzer, SquatAnalyzer, ExerciseAnalyzer, AnalysisResult } from '../logic/analyzers';
+import { ExerciseAnalyzer, SquatAnalyzer, RowingAnalyzer } from '../logic/analyzers';
 
 // Convert MediaPipe landmarks array to LandmarkMap
 function landmarksToMap(landmarks: any[]): { [key: number]: { x: number, y: number, z: number, visibility?: number } } {
@@ -23,16 +23,21 @@ const CVAnalyzer: React.FC = () => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [feedback, setFeedback] = useState<string>('Initializing...');
-  const [stage, setStage] = useState<string>('IDLE');
+  const [stage, setStage] = useState<string>('CATCH'); // Initialize to RowingAnalyzer's default stage
   const [counter, setCounter] = useState<number>(0);
   const [error, setError] = useState<string>('');
   const analyzerRef = useRef<ExerciseAnalyzer | null>(null);
   const poseRef = useRef<Pose | null>(null);
   const isProcessingRef = useRef<boolean>(false);
+  const lastAnalysisTime = useRef(0);
+  const ANALYSIS_INTERVAL_MS = 100; // 10 FPS (1000ms / 10)
+  const smoothedLandmarksRef = useRef<any[] | null>(null);
 
   useEffect(() => {
     // Initialize analyzer
-    analyzerRef.current = new SquatAnalyzer();
+    analyzerRef.current = new RowingAnalyzer();
+    // Initialize stage to match the analyzer's initial stage
+    setStage(analyzerRef.current.getResults().stage);
 
     // Initialize MediaPipe Pose
     const pose = new Pose({
@@ -61,49 +66,89 @@ const CVAnalyzer: React.FC = () => {
       
       if (!canvasCtx) return;
 
-      // --- THIS IS THE FIX ---
-      // Set canvas dimensions to match the results
       canvasElement.width = results.image.width;
       canvasElement.height = results.image.height;
-      // --- END FIX ---
 
       canvasCtx.save();
       canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
-      
-      canvasCtx.drawImage(
-        results.image,
-        0,
-        0,
-        canvasElement.width,
-        canvasElement.height
-      );
 
-      // Draw skeleton if landmarks exist
+      // --- Mirror the video feed ---
+      canvasCtx.scale(-1, 1);
+      canvasCtx.translate(-canvasElement.width, 0);
+      // --- End mirror ---
+
+      canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+
+      // --- LANDMARK SMOOTHING (EMA) ---
+      const ALPHA = 0.5; // Smoothing factor. 0.1 = very smooth (laggy), 0.9 = very responsive (jittery)
+      let smoothedLandmarks = results.poseLandmarks;
+
       if (results.poseLandmarks) {
-        // Draw connections
-        drawConnectors(canvasCtx, results.poseLandmarks, POSE_CONNECTIONS, {
-          color: '#00FF00',
-          lineWidth: 2
-        });
-        
-        // Draw landmarks
-        drawLandmarks(canvasCtx, results.poseLandmarks, {
-          color: '#FF0000',
-          lineWidth: 1,
-          radius: 3
-        });
+        if (!smoothedLandmarksRef.current) {
+          // First frame, just copy the raw landmarks
+          smoothedLandmarksRef.current = results.poseLandmarks.map((lm: any) => ({ ...lm }));
+        } else {
+          // Apply EMA to each landmark
+          const lastSmoothed = smoothedLandmarksRef.current;
+          const newSmoothed: any[] = [];
 
-        // Convert landmarks to map format and update analyzer
-        const landmarkMap = landmarksToMap(results.poseLandmarks);
-        const analysis: AnalysisResult = analyzerRef.current!.update(landmarkMap);
+          for (let i = 0; i < results.poseLandmarks.length; i++) {
+            const raw = results.poseLandmarks[i];
+            const last = lastSmoothed[i];
 
-        // Update React state with analysis results
-        setFeedback(analysis.feedback);
-        setStage(analysis.stage);
-        setCounter(analysis.counter);
+            // If a landmark was lost, just use the raw one
+            if (!last) {
+              newSmoothed[i] = { ...raw };
+              continue;
+            }
+
+            // Apply EMA formula
+            const smoothedX = (ALPHA * raw.x) + ((1 - ALPHA) * last.x);
+            const smoothedY = (ALPHA * raw.y) + ((1 - ALPHA) * last.y);
+            const smoothedZ = (ALPHA * raw.z) + ((1 - ALPHA) * last.z);
+            
+            newSmoothed[i] = {
+              ...raw, // Keep visibility, etc.
+              x: smoothedX,
+              y: smoothedY,
+              z: smoothedZ,
+            };
+          }
+          smoothedLandmarksRef.current = newSmoothed;
+          smoothedLandmarks = newSmoothed;
+        }
       } else {
-        // No landmarks detected
-        setFeedback('Position yourself in front of the camera');
+        // No person detected, reset the smoother
+        smoothedLandmarksRef.current = null;
+      }
+      // --- END SMOOTHING ---
+
+      // --- DRAWING (FAST) ---
+      // Use the *smoothedLandmarks* variable now
+      if (smoothedLandmarks) {
+        drawConnectors(canvasCtx, smoothedLandmarks, POSE_CONNECTIONS, { color: '#00FF00', lineWidth: 4 });
+        drawLandmarks(canvasCtx, smoothedLandmarks, { color: '#FF0000', lineWidth: 2 });
+      }
+
+      // --- THINKING (THROTTLED) ---
+      const now = Date.now();
+      if (now - lastAnalysisTime.current > ANALYSIS_INTERVAL_MS) {
+        lastAnalysisTime.current = now;
+
+        // Use the *smoothedLandmarks* variable for analysis
+        if (smoothedLandmarks) {
+          // Convert smoothed landmarks to map format and update analyzer
+          const landmarkMap = landmarksToMap(smoothedLandmarks);
+          const analysisResults = analyzerRef.current!.update(landmarkMap);
+          
+          // Update React state with analysis results
+          setFeedback(analysisResults.feedback);
+          setStage(analysisResults.stage);
+          setCounter(analysisResults.counter);
+        } else {
+          // No landmarks detected
+          setFeedback('Position yourself in front of the camera');
+        }
       }
 
       canvasCtx.restore();
